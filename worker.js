@@ -80,7 +80,68 @@ export default {
       { label: "Net / Gross Weight", value: "320 kg / 360 kg" }
     ].map(x => x.label + ": " + x.value).join(NL);
 
-    const defaultProducts = [];
+    const defaultProducts = [
+      {
+        id: "orig_1",
+        cat: "mixer",
+        title: "20L Commercial Planetary Mixer Machine for Bakery",
+        price: "$530 USD",
+        desc: "20L commercial planetary mixer with three mixing attachments for different applications. Whisk for eggs and cream, dough hook for dough mixing, and flat beater for fillings and general mixing. Features 3 mixing speeds and a durable stainless steel mixing bowl. Ideal for bakeries, pastry shops, restaurants and food businesses.",
+        specs: defaultSpecTemplate,
+        imgs: ["https://images.unsplash.com/photo-1578985545062-69928b1d9587?auto=format&fit=crop&w=800&q=80"],
+        video: ""
+      },
+      {
+        id: "orig_2",
+        cat: "mixer",
+        title: "75KG Commercial Tilting Dough Mixer Machine for Bakery",
+        price: "$5,550 USD",
+        desc: "75kg large-capacity dough mixer designed for commercial bakeries and food processing factories. Tilting bowl design makes dough discharge easier and more convenient. Heavy-duty construction for daily commercial production. Ideal for mixing dough for bread, toast and other bakery products.",
+        specs: defaultSpecTemplate,
+        imgs: ["https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=800&q=80"],
+        video: ""
+      },
+      {
+        id: "orig_3",
+        cat: "sheeter",
+        title: "Commercial Compact Tabletop Dough Sheeter Machine for Bakery & Pastry",
+        price: "$1,130 USD",
+        desc: "Compact space-saving design, precise thickness adjustment, stainless steel rollers & foldable tables for croissant and puff pastry dough.",
+        specs: defaultSpecTemplate,
+        imgs: ["https://images.unsplash.com/photo-1556910103-1c02745aae4d?auto=format&fit=crop&w=800&q=80"],
+        video: ""
+      },
+      {
+        id: "orig_4",
+        cat: "oven",
+        title: "Commercial Hot Air Convection Oven (Max 300°C) for Bakery & Pastry",
+        price: "$1,130 USD",
+        desc: "Up to 300°C max temperature, uniform hot air circulation, stainless steel chamber for bread, pastry, cookies, and roasting.",
+        specs: defaultSpecTemplate,
+        imgs: ["https://images.unsplash.com/photo-1556910103-1c02745aae4d?auto=format&fit=crop&w=800&q=80"],
+        video: ""
+      },
+      {
+        id: "orig_5",
+        cat: "sheeter",
+        title: "Commercial Heavy-Duty Dough Sheeter Machine for Bakery & Pastry",
+        price: "$1,170 USD",
+        desc: "Reversible conveyor belt, precise thickness adjustment, food-grade stainless steel rollers for croissant & puff pastry dough.",
+        specs: defaultSpecTemplate,
+        imgs: ["https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=800&q=80"],
+        video: ""
+      },
+      {
+        id: "orig_6",
+        cat: "divider",
+        title: "Fully Automatic Dough Divider & Rounder Machine (16/26/30/36 Pcs, 220V/380V, 1.8kW)",
+        price: "$1,670 USD",
+        desc: "Available in 16, 26, 30, and 36 pcs models covering 20–200g dough weights, 220V/380V power, 1.8kW motor, 660×660×1460mm size, and 425kg net weight.",
+        specs: defaultSpecTemplate,
+        imgs: ["https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=800&q=80"],
+        video: ""
+      }
+    ];
 
     const defaultSiteConfig = {
       banners: [
@@ -113,16 +174,17 @@ export default {
         const parsed = JSON.parse(raw);
         if (key === "siteConfig") {
           return {
-            banners: Array.isArray(parsed.banners) ? parsed.banners : fallback.banners,
-            about: typeof parsed.about === "string" ? parsed.about : fallback.about,
-            video: sanitizeMedia(parsed.video),
-            certs: Array.isArray(parsed.certs) ? parsed.certs : fallback.certs
+            banners: Array.isArray(parsed.banners) && parsed.banners.length ? parsed.banners : fallback.banners,
+            about: typeof parsed.about === "string" && parsed.about ? parsed.about : fallback.about,
+            video: sanitizeMedia(parsed.video) || fallback.video,
+            certs: Array.isArray(parsed.certs) && parsed.certs.length ? parsed.certs : fallback.certs
           };
         }
         if (key === "products" && Array.isArray(parsed)) {
-          return parsed.map(item => ({
+          const sourceList = parsed.length ? parsed : fallback;
+          return sourceList.map(item => ({
             ...item,
-            specs: item.specs || "",
+            specs: item.specs || defaultSpecTemplate,
             imgs: Array.isArray(item.imgs) ? item.imgs.slice(0, 5) : [],
             video: sanitizeMedia(item.video)
           }));
@@ -439,6 +501,7 @@ function renderStoreHtml(categories, defaultSiteConfig) {
   </div>
 
   <script>
+    const NL = String.fromCharCode(10);
     const fallbackCats = ${JSON.stringify(categories)};
     const fallbackCfg = ${JSON.stringify(defaultSiteConfig)};
     const langData = {
@@ -522,7 +585,7 @@ function renderStoreHtml(categories, defaultSiteConfig) {
 
     function parseSpecsRows(specsText) {
       return String(specsText || "")
-        .split(String.fromCharCode(10))
+        .split(NL)
         .map(line => line.trim())
         .filter(Boolean)
         .map(line => {
