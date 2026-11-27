@@ -1,6 +1,7 @@
 export default {
   async fetch(request, env) {
     const ADMIN_PASSWORD = env.ADMIN_PASSWORD || "gzdbjx..168";
+    const NL = String.fromCharCode(10);
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -13,7 +14,13 @@ export default {
     }
 
     if (path === "/robots.txt") {
-      const robots = `User-agent: *\nAllow: /\nDisallow: /admin\nSitemap: \${url.origin}/sitemap.xml\n`;
+      const robots = [
+        "User-agent: *",
+        "Allow: /",
+        "Disallow: /admin",
+        "Sitemap: " + url.origin + "/sitemap.xml",
+        ""
+      ].join(NL);
       return new Response(robots, {
         headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
@@ -21,15 +28,17 @@ export default {
 
     if (path === "/sitemap.xml") {
       const now = new Date().toISOString().split("T")[0];
-      const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>\${url.origin}/</loc>
-    <lastmod>\${now}</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>1.0</priority>
-  </url>
-</urlset>`;
+      const xml = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+        "  <url>",
+        "    <loc>" + url.origin + "/</loc>",
+        "    <lastmod>" + now + "</lastmod>",
+        "    <changefreq>daily</changefreq>",
+        "    <priority>1.0</priority>",
+        "  </url>",
+        "</urlset>"
+      ].join(NL);
       return new Response(xml, {
         headers: { "Content-Type": "application/xml; charset=utf-8" }
       });
@@ -41,7 +50,7 @@ export default {
         return new Response(JSON.stringify({ ok: true }), {
           headers: {
             "Content-Type": "application/json",
-            "Set-Cookie": `debao_admin_pwd=\${encodeURIComponent(ADMIN_PASSWORD)}; Path=/; Max-Age=604800; SameSite=Lax`
+            "Set-Cookie": "debao_admin_pwd=" + encodeURIComponent(ADMIN_PASSWORD) + "; Path=/; Max-Age=604800; SameSite=Lax"
           }
         });
       }
@@ -69,7 +78,7 @@ export default {
       { label: "Material", value: "Food-grade 304 Stainless Steel" },
       { label: "Dimensions (L×W×H)", value: "1200 × 850 × 1450 mm" },
       { label: "Net / Gross Weight", value: "320 kg / 360 kg" }
-    ].map(x => `${x.label}:${x.value}`).join("\n");
+    ].map(x => x.label + ": " + x.value).join(NL);
 
     const defaultProducts = [];
 
@@ -430,8 +439,8 @@ function renderStoreHtml(categories, defaultSiteConfig) {
   </div>
 
   <script>
-    const fallbackCats = \${JSON.stringify(categories)};
-    const fallbackCfg = \${JSON.stringify(defaultSiteConfig)};
+    const fallbackCats = ${JSON.stringify(categories)};
+    const fallbackCfg = ${JSON.stringify(defaultSiteConfig)};
     const langData = {
       en: {
         home: "Home", products: "Bakery Equipment", about: "About Us", certs: "Certifications", shipping: "Shipping & OEM",
@@ -513,7 +522,7 @@ function renderStoreHtml(categories, defaultSiteConfig) {
 
     function parseSpecsRows(specsText) {
       return String(specsText || "")
-        .split(/\r?\n/)
+        .split(String.fromCharCode(10))
         .map(line => line.trim())
         .filter(Boolean)
         .map(line => {
@@ -582,4 +591,527 @@ function renderStoreHtml(categories, defaultSiteConfig) {
       const grid = document.getElementById("prodGrid");
       const list = state.activeCat === "all" ? state.products : state.products.filter(p => p.cat === state.activeCat);
       const catObj = state.categories.find(c => c.id === state.activeCat);
-      document.getElementById
+      document.getElementById("catHeading").textContent = catObj ? catObj.name : d.allBtn;
+      document.getElementById("prodCount").textContent = list.length + " Products";
+
+      if (!list.length) {
+        grid.innerHTML = '<div class="col-span-full text-center text-gray-500 py-10">No products in this category yet.</div>';
+        return;
+      }
+
+      grid.innerHTML = list.map(p => {
+        const img = (p.imgs && p.imgs[0]) ? p.imgs[0] : "https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=800&q=80";
+        const waText = encodeURIComponent("Hello Debao Machinery, I am interested in: " + (p.title || ""));
+        const specsPreview = renderSpecsTable(p.specs, true);
+        return '<div class="bg-white rounded-xl shadow-md overflow-hidden border border-gray-100 hover:shadow-xl transition flex flex-col">' +
+          '<div class="h-60 bg-gray-100 overflow-hidden relative cursor-pointer" onclick="openModal(\'' + esc(p.id) + '\')">' +
+            '<img src="' + esc(img) + '" alt="' + esc(p.title) + '" class="w-full h-full object-cover hover:scale-105 transition duration-300" />' +
+            (p.specs ? '<span class="absolute top-3 right-3 bg-gray-900/80 text-white text-xs font-semibold px-2.5 py-1 rounded">Specs Ready</span>' : '') +
+          '</div>' +
+          '<div class="p-5 flex-1 flex flex-col justify-between">' +
+            '<div>' +
+              '<h3 class="text-lg font-bold text-gray-900 cursor-pointer hover:text-orange-600" onclick="openModal(\'' + esc(p.id) + '\')">' + esc(p.title) + '</h3>' +
+              '<p class="text-gray-600 text-sm mt-2 line-clamp-3">' + esc(p.desc) + '</p>' +
+              specsPreview +
+            '</div>' +
+            '<div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between gap-2">' +
+              '<span class="text-lg font-black text-orange-600">' + esc(p.price || "Contact for Price") + '</span>' +
+              '<div class="flex items-center gap-2">' +
+                '<button onclick="openModal(\'' + esc(p.id) + '\')" class="bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-bold px-3 py-2 rounded-lg">' + esc(d.specsBtn) + '</button>' +
+                '<a href="https://wa.me/8618124272578?text=' + waText + '" target="_blank" class="bg-green-600 hover:bg-green-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg flex items-center space-x-1">' +
+                  '<i class="fab fa-whatsapp"></i><span>' + esc(d.inquireBtn) + '</span>' +
+                '</a>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }).join("");
+    }
+
+    function openModal(id) {
+      const p = state.products.find(x => x.id === id);
+      if (!p) return;
+      const imgsHtml = (p.imgs || []).map(src =>
+        '<img src="' + esc(src) + '" class="w-full h-56 object-cover rounded-lg border border-gray-200" />'
+      ).join("");
+      let videoHtml = "";
+      if (p.video) {
+        if (p.video.startsWith("data:video/")) {
+          videoHtml = '<video src="' + esc(p.video) + '" controls class="w-full rounded-lg mt-4 max-h-72 bg-black"></video>';
+        } else {
+          videoHtml = '<div class="mt-4"><a href="' + esc(p.video) + '" target="_blank" class="inline-block bg-orange-600 text-white text-xs font-bold px-4 py-2 rounded-lg">▶ Watch Machine Video ↗</a></div>';
+        }
+      }
+      const waText = encodeURIComponent("Hello Debao Machinery, please send quotation & full technical parameters for: " + (p.title || ""));
+      document.getElementById("modalBody").innerHTML =
+        '<h3 class="text-2xl font-bold text-gray-900 pr-8">' + esc(p.title) + '</h3>' +
+        '<div class="text-xl font-black text-orange-600 mt-1">' + esc(p.price || "Contact for Price") + '</div>' +
+        '<p class="text-gray-600 text-sm mt-3 leading-relaxed">' + esc(p.desc) + '</p>' +
+        (p.specs ? '<h4 class="font-bold text-sm text-gray-900 mt-5">Technical Specifications</h4>' + renderSpecsTable(p.specs, false) : '') +
+        videoHtml +
+        '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">' + imgsHtml + '</div>' +
+        '<div class="mt-6 flex justify-end">' +
+          '<a href="https://wa.me/8618124272578?text=' + waText + '" target="_blank" class="bg-green-600 hover:bg-green-700 text-white font-bold px-6 py-3 rounded-xl flex items-center space-x-2">' +
+            '<i class="fab fa-whatsapp text-lg"></i><span>Inquire via WhatsApp (+86 181-2427-2578)</span>' +
+          '</a>' +
+        '</div>';
+      const modal = document.getElementById("detailModal");
+      modal.classList.remove("hidden");
+      modal.classList.add("flex");
+    }
+
+    function closeModal() {
+      const modal = document.getElementById("detailModal");
+      modal.classList.add("hidden");
+      modal.classList.remove("flex");
+    }
+
+    function renderCerts() {
+      const box = document.getElementById("certsGrid");
+      const certs = (state.siteConfig && Array.isArray(state.siteConfig.certs)) ? state.siteConfig.certs : [];
+      box.innerHTML = certs.map(c =>
+        '<div class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm text-center">' +
+          (c.img ? '<img src="' + esc(c.img) + '" alt="' + esc(c.name) + '" class="w-full h-40 object-cover rounded-lg mb-3" />' : '') +
+          '<div class="font-bold text-sm text-gray-800">' + esc(c.name || "Certificate") + '</div>' +
+        '</div>'
+      ).join("");
+    }
+
+    function renderFactoryVideo() {
+      const v = state.siteConfig && state.siteConfig.video;
+      const box = document.getElementById("factoryVideoBox");
+      if (!v) {
+        box.innerHTML = '<a href="https://wa.me/8618124272578" target="_blank" class="text-orange-400 underline">Contact us on WhatsApp for live factory tour video ↗</a>';
+        return;
+      }
+      if (v.startsWith("data:video/")) {
+        box.innerHTML = '<video src="' + esc(v) + '" controls class="w-full rounded-lg max-h-60 bg-black"></video>';
+      } else {
+        box.innerHTML = '<p class="mb-3">Video link configured:</p>' +
+          '<a href="' + esc(v) + '" target="_blank" rel="noopener" class="inline-flex items-center space-x-2 bg-orange-600 hover:bg-orange-700 text-white font-bold px-4 py-2.5 rounded-lg">' +
+          '<i class="fas fa-play-circle"></i><span>Open Factory Video ↗</span></a>';
+      }
+    }
+
+    async function init() {
+      const res = await fetch("/api/bootstrap");
+      const data = await res.json();
+      state.categories = data.categories || fallbackCats;
+      state.products = data.products || [];
+      state.siteConfig = data.siteConfig || fallbackCfg;
+      document.getElementById("aboutText").textContent = state.siteConfig.about || "";
+      if (state.siteConfig.banners && state.siteConfig.banners[0]) {
+        document.getElementById("heroBg").style.backgroundImage = "url('" + state.siteConfig.banners[0] + "')";
+      }
+      renderFactoryVideo();
+      renderCats();
+      renderProducts();
+      renderCerts();
+      setInterval(updateBanner, 5000);
+    }
+    init();
+  </script>
+</body>
+</html>`;
+}
+
+function renderAdminHtml(categories, defaultSpecTemplate, defaultSiteConfig) {
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>德堡机械 - 独立站全功能管理后台</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f3f4f6; color: #111827; }
+    .wrap { max-width: 1120px; margin: 24px auto; padding: 0 16px; }
+    .panel { background: #fff; border-radius: 10px; padding: 20px; margin-bottom: 18px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    label { display: block; font-weight: bold; margin: 12px 0 4px; font-size: 13px; }
+    input, select, textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
+    textarea.specs { min-height: 145px; font-family: monospace; line-height: 1.5; }
+    button { padding: 8px 14px; border: none; border-radius: 6px; background: #2563eb; color: #fff; cursor: pointer; margin-top: 8px; margin-right: 6px; font-weight: bold; }
+    button.secondary { background: #4b5563; }
+    button.danger { background: #dc2626; }
+    button.success { background: #059669; }
+    .item { border-top: 1px solid #e5e7eb; padding: 16px 0; }
+    .row-flex { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+    .edit-box { background: #f9fafb; border: 1px solid #d1d5db; border-radius: 8px; padding: 16px; margin-top: 12px; }
+    .thumb-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+    .thumb-item { position: relative; width: 84px; height: 64px; border: 1px solid #d1d5db; border-radius: 6px; overflow: hidden; }
+    .thumb-item img { width: 100%; height: 100%; object-fit: cover; }
+    .thumb-item button { position: absolute; top: 2px; right: 2px; margin: 0; padding: 1px 6px; background: rgba(220,38,38,0.9); font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+      <div>
+        <h2 style="margin:0 0 8px;">🏭 广州德堡机械 - 独立站全功能管理后台</h2>
+        <div style="font-size:13px;color:#4b5563;">已开启管理员密码保护 · 支持产品技术参数模板、本地传图传视频与 Sitemap 收录</div>
+        <div style="margin-top:8px;">
+          <a href="/" target="_blank">查看前台网站 ↗</a> · <a href="/sitemap.xml" target="_blank">查看 Sitemap ↗</a>
+        </div>
+      </div>
+      <button type="button" class="danger" onclick="logoutAdmin()">退出登录</button>
+    </div>
+
+    <div class="panel">
+      <h3 style="margin-top:0;">🖼️ 首页轮转图、公司介绍、视频与资质证书配置</h3>
+      <label>公司英文简介文案</label>
+      <textarea id="cfgAbout" rows="3"></textarea>
+
+      <label>工厂演示视频（支持直接上传本地视频或填视频链接）</label>
+      <input id="cfgVideo" placeholder="输入视频链接（如 Facebook / YouTube），或下方选择本地视频" />
+      <input type="file" accept="video/*" onchange="uploadVideoToInput(this, 'cfgVideo')" style="margin-top:6px;" />
+
+      <label>轮转图管理（支持本地上传图片）</label>
+      <div id="bannerThumbs" class="thumb-row"></div>
+      <input type="file" accept="image/*" multiple onchange="uploadBannerFiles(this)" />
+
+      <label>工厂资质 / 荣誉证书管理（每行 1 项，格式：证书名称 | 图片链接或Base64）</label>
+      <textarea id="cfgCerts" rows="4"></textarea>
+
+      <div>
+        <button type="button" class="success" onclick="saveSiteConfig()">💾 保存全部首页及资质配置</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3 style="margin-top:0;">➕ 上架新机器 / 添加产品（多图 + 技术参数模板 + 视频）</h3>
+      <label>所属大分类 *</label>
+      <select id="newCat">
+        ${categories.map(c => `<option value="${c.id}">${c.name} (${c.zh})</option>`).join("")}
+      </select>
+      <label>展示价格</label>
+      <input id="newPrice" value="Contact for Price" />
+      <label>英文产品标题 *</label>
+      <input id="newTitle" placeholder="例如：Fully Automatic Dough Divider" />
+      <label>简短卖点描述（英文）</label>
+      <input id="newDesc" placeholder="例如：Stainless steel body, exact weight control." />
+      <label>产品技术参数（每行一项，格式 英文参数名: 参数值）</label>
+      <textarea id="newSpecs" class="specs" placeholder="点击下方按钮一键填入标准参数模板，再修改数字即可"></textarea>
+      <button type="button" class="secondary" onclick="fillNewSpecTpl()">✨ 一键填入标准参数模板</button>
+
+      <label>上传机器实拍照片（可多选，最多 5 张，支持本地直接选图）*</label>
+      <input type="file" id="newImgFiles" accept="image/*" multiple />
+
+      <label>该产品演示视频（支持直接上传本地视频或填链接，可选）</label>
+      <input id="newVideo" placeholder="输入视频链接，或下方直接选择本地视频" />
+      <input type="file" accept="video/*" onchange="uploadVideoToInput(this, 'newVideo')" style="margin-top:6px;" />
+
+      <div style="margin-top:10px;"><button type="button" onclick="addProduct()">确认上架此产品</button></div>
+    </div>
+
+    <div class="panel">
+      <h3 id="listTitle" style="margin-top:0;">📦 已上架产品列表</h3>
+      <div id="prodList"></div>
+    </div>
+  </div>
+
+  <script>
+    const NL = String.fromCharCode(10);
+    const categories = ${JSON.stringify(categories)};
+    const specTpl = ${JSON.stringify(defaultSpecTemplate)};
+    const fallbackCfg = ${JSON.stringify(defaultSiteConfig)};
+    let products = [];
+    let siteConfig = fallbackCfg;
+    let editingId = null;
+    let editImgsBuffer = [];
+
+    function logoutAdmin() {
+      document.cookie = "debao_admin_pwd=; Path=/; Max-Age=0";
+      location.reload();
+    }
+
+    function esc(s) {
+      return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function fillNewSpecTpl() {
+      document.getElementById("newSpecs").value = specTpl;
+    }
+
+    function fillEditSpecTpl() {
+      const el = document.getElementById("editSpecs");
+      if (el) el.value = specTpl;
+    }
+
+    function fileToCompressedDataUrl(file, maxW = 1000, quality = 0.8) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => {
+          const img = new Image();
+          img.onload = () => {
+            const scale = Math.min(1, maxW / img.width);
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.round(img.width * scale);
+            canvas.height = Math.round(img.height * scale);
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL("image/jpeg", quality));
+          };
+          img.onerror = reject;
+          img.src = e.target.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function uploadVideoToInput(input, targetId) {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      if (file.size > 6 * 1024 * 1024) {
+        alert("本地视频建议小于 6MB，大视频请直接填写链接更稳定。");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = e => {
+        document.getElementById(targetId).value = e.target.result;
+        alert("本地视频已加载，记得点击保存/上架按钮生效");
+      };
+      reader.readAsDataURL(file);
+    }
+
+    async function uploadBannerFiles(input) {
+      const files = Array.from(input.files || []);
+      for (const f of files) {
+        const url = await fileToCompressedDataUrl(f, 1400, 0.82);
+        siteConfig.banners.push(url);
+      }
+      renderBannerThumbs();
+    }
+
+    function removeBanner(idx) {
+      siteConfig.banners.splice(idx, 1);
+      renderBannerThumbs();
+    }
+
+    function renderBannerThumbs() {
+      const box = document.getElementById("bannerThumbs");
+      box.innerHTML = (siteConfig.banners || []).map((src, idx) =>
+        '<div class="thumb-item"><img src="' + esc(src) + '" /><button type="button" onclick="removeBanner(' + idx + ')">×</button></div>'
+      ).join("");
+    }
+
+    function formatCertsToText(certs) {
+      if (!Array.isArray(certs)) return "";
+      return certs.map(c => (c.name || "") + " | " + (c.img || "")).join(NL);
+    }
+
+    function parseCertsFromText(text) {
+      return String(text || "").split(NL).map(l => l.trim()).filter(Boolean).map(line => {
+        const idx = line.indexOf("|");
+        if (idx !== -1) return { name: line.slice(0, idx).trim(), img: line.slice(idx + 1).trim() };
+        return { name: line, img: "" };
+      });
+    }
+
+    async function loadAll() {
+      const res = await fetch("/api/bootstrap");
+      const data = await res.json();
+      siteConfig = data.siteConfig || fallbackCfg;
+      document.getElementById("cfgAbout").value = siteConfig.about || "";
+      document.getElementById("cfgVideo").value = siteConfig.video || "";
+      document.getElementById("cfgCerts").value = formatCertsToText(siteConfig.certs || []);
+      renderBannerThumbs();
+      products = data.products || [];
+      renderList();
+    }
+
+    async function saveSiteConfig() {
+      const payload = {
+        banners: siteConfig.banners || [],
+        about: document.getElementById("cfgAbout").value,
+        video: document.getElementById("cfgVideo").value.trim(),
+        certs: parseCertsFromText(document.getElementById("cfgCerts").value)
+      };
+      const res = await fetch("/api/site-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      alert(data.ok ? "首页及资质配置已保存" : (data.error || "保存失败"));
+    }
+
+    function renderList() {
+      document.getElementById("listTitle").textContent = "📦 已上架产品列表（共 " + products.length + " 款）";
+      const box = document.getElementById("prodList");
+      if (!products.length) {
+        box.innerHTML = "<p>暂无产品</p>";
+        return;
+      }
+      box.innerHTML = products.map(p => {
+        const isEditing = editingId === p.id;
+        let editHtml = "";
+        if (isEditing) {
+          const catOpts = categories.map(c =>
+            '<option value="' + esc(c.id) + '" ' + (p.cat === c.id ? "selected" : "") + '>' + esc(c.name) + ' (' + esc(c.zh) + ')</option>'
+          ).join("");
+          const thumbs = editImgsBuffer.map((src, i) =>
+            '<div class="thumb-item"><img src="' + esc(src) + '" /><button type="button" onclick="removeEditImg(' + i + ')">×</button></div>'
+          ).join("");
+          editHtml = '<div class="edit-box">' +
+            '<label>所属大分类</label><select id="editCat">' + catOpts + '</select>' +
+            '<label>英文产品标题</label><input id="editTitle" value="' + esc(p.title) + '" />' +
+            '<label>展示价格</label><input id="editPrice" value="' + esc(p.price) + '" />' +
+            '<label>简短卖点描述（英文）</label><input id="editDesc" value="' + esc(p.desc) + '" />' +
+            '<label>产品技术参数（每行一项，格式 英文参数名: 参数值）</label>' +
+            '<textarea id="editSpecs" class="specs">' + esc(p.specs || "") + '</textarea>' +
+            '<button type="button" class="secondary" onclick="fillEditSpecTpl()">✨ 一键填入标准参数模板</button>' +
+            '<label>当前产品图片（最多 5 张，可删除或追加上传）</label>' +
+            '<div class="thumb-row">' + thumbs + '</div>' +
+            '<input type="file" accept="image/*" multiple onchange="appendEditImgs(this)" />' +
+            '<label>产品演示视频链接或本地上传</label>' +
+            '<input id="editVideo" value="' + esc(p.video || "") + '" />' +
+            '<input type="file" accept="video/*" onchange="uploadVideoToInput(this, \'editVideo\')" style="margin-top:6px;" />' +
+            '<div style="margin-top:10px;"><button type="button" class="success" onclick="saveEdit(\'' + p.id + '\')">💾 保存图文与参数修改</button>' +
+            '<button type="button" class="secondary" onclick="cancelEdit()">取消</button></div>' +
+          '</div>';
+        }
+        return '<div class="item">' +
+          '<div class="row-flex" style="justify-content:space-between;">' +
+            '<div><strong>' + esc(p.title) + '</strong> · <span style="color:#dc2626;font-weight:bold;">' + esc(p.price) + '</span> · <span style="font-size:12px;color:#6b7280;">' + (p.imgs ? p.imgs.length : 0) + ' 张图</span></div>' +
+            '<div class="row-flex" style="margin:0;">' +
+              '<input id="quickPrice_' + p.id + '" style="width:140px;margin:0;" value="' + esc(p.price || "") + '" />' +
+              '<button type="button" style="margin:0;" onclick="quickUpdatePrice(\'' + p.id + '\')">改价格</button>' +
+              '<button type="button" class="secondary" style="margin:0;" onclick="startEdit(\'' + p.id + '\')">修改图文/参数</button>' +
+              '<button type="button" class="danger" style="margin:0;" onclick="delProd(\'' + p.id + '\')">删除</button>' +
+            '</div>' +
+          '</div>' +
+          (p.desc ? '<div style="font-size:13px;color:#374151;margin-top:4px;">' + esc(p.desc) + '</div>' : '') +
+          (p.specs ? '<div style="font-size:12px;color:#059669;white-space:pre-line;margin-top:6px;background:#f0fdf4;padding:6px 8px;border-radius:6px;">' + esc(p.specs) + '</div>' : '') +
+          editHtml +
+        '</div>';
+      }).join("");
+    }
+
+    function startEdit(id) {
+      const p = products.find(x => x.id === id);
+      editingId = id;
+      editImgsBuffer = p && Array.isArray(p.imgs) ? [...p.imgs] : [];
+      renderList();
+    }
+
+    function removeEditImg(idx) {
+      editImgsBuffer.splice(idx, 1);
+      renderList();
+    }
+
+    async function appendEditImgs(input) {
+      const files = Array.from(input.files || []);
+      for (const f of files) {
+        if (editImgsBuffer.length >= 5) break;
+        const url = await fileToCompressedDataUrl(f, 1000, 0.8);
+        editImgsBuffer.push(url);
+      }
+      renderList();
+    }
+
+    function cancelEdit() {
+      editingId = null;
+      editImgsBuffer = [];
+      renderList();
+    }
+
+    async function saveEdit(id) {
+      const payload = {
+        action: "update",
+        id,
+        cat: document.getElementById("editCat").value,
+        title: document.getElementById("editTitle").value.trim(),
+        price: document.getElementById("editPrice").value.trim() || "Contact for Price",
+        desc: document.getElementById("editDesc").value.trim(),
+        specs: document.getElementById("editSpecs").value,
+        imgs: editImgsBuffer.slice(0, 5),
+        video: document.getElementById("editVideo").value.trim()
+      };
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.ok) {
+        products = data.products;
+        editingId = null;
+        renderList();
+        alert("产品图文与技术参数已更新");
+      } else {
+        alert(data.error || "更新失败");
+      }
+    }
+
+    async function quickUpdatePrice(id) {
+      const priceInput = document.getElementById("quickPrice_" + id);
+      const price = (priceInput ? priceInput.value : "").trim() || "Contact for Price";
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "price", id, price })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        products = data.products;
+        renderList();
+        alert("价格已更新");
+      }
+    }
+
+    async function addProduct() {
+      const title = document.getElementById("newTitle").value.trim();
+      if (!title) return alert("请先填写英文产品标题");
+      const files = Array.from(document.getElementById("newImgFiles").files || []).slice(0, 5);
+      const imgs = [];
+      for (const f of files) {
+        imgs.push(await fileToCompressedDataUrl(f, 1000, 0.8));
+      }
+      const payload = {
+        action: "add",
+        cat: document.getElementById("newCat").value,
+        title,
+        price: document.getElementById("newPrice").value.trim() || "Contact for Price",
+        desc: document.getElementById("newDesc").value.trim(),
+        specs: document.getElementById("newSpecs").value,
+        imgs,
+        video: document.getElementById("newVideo").value.trim()
+      };
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.ok) {
+        products = data.products;
+        renderList();
+        document.getElementById("newTitle").value = "";
+        document.getElementById("newDesc").value = "";
+        document.getElementById("newSpecs").value = "";
+        document.getElementById("newImgFiles").value = "";
+        alert("新机器已上架");
+      } else {
+        alert(data.error || "上架失败");
+      }
+    }
+
+    async function delProd(id) {
+      if (!confirm("确定要删除这款产品吗？")) return;
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", id })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        products = data.products;
+        renderList();
+      }
+    }
+
+    loadAll();
+  </script>
+</body>
+</html>`;
+}
