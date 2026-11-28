@@ -244,7 +244,12 @@ export default {
     if(url.pathname==="/robots.txt")return new Response("User-agent: *\nAllow: /\nSitemap: "+url.origin+"/sitemap.xml",{headers:{"content-type":"text/plain"}});
     if(url.pathname==="/sitemap.xml"){
       const products=await read(env,"products",[]);
-      const urls=LANGS.flatMap(l=>[`<url><loc>${url.origin}/${l}/</loc></url>`,...products.map(p=>`<url><loc>${url.origin}/${l}/product/${encodeURIComponent(p.id)}</loc></url>`)]).join("");
+     const urls = LANGS.flatMap(l => [
+  "<url><loc>" + url.origin + "/" + l + "/</loc></url>",
+  ...products.map(p =>
+    "<url><loc>" + url.origin + "/" + l + "/product/" + encodeURIComponent(p.id) + "</loc></url>"
+  )
+]).join("");
       return new Response(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}</urlset>`,{headers:{"content-type":"application/xml"}});
     }
     if(url.pathname==="/")return Response.redirect(url.origin+"/en/",302);
