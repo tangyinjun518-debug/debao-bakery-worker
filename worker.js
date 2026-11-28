@@ -133,29 +133,37 @@ async function api(path,method="GET",data){let r=await fetch(path,{method,header
 async function login(){try{await api("/api/login","POST",{password:$("pw").value});$("login").style.display="none";$("app").style.display="block";await load()}catch(e){$("err").textContent=e.message}}
 async function logout(){await api("/api/logout","POST",{}).catch(()=>{});location.reload()}
 async function load(){let d=await api("/api/admin/bootstrap");window.data=d;render();$("company").value=d.config.company||"";$("about").value=d.config.about||"";$("whatsapp").value=d.config.whatsapp||"";$("email").value=d.config.email||"";$("factoryVideo").value=d.config.factoryVideo||""}
+
 function render(){
-$("products").innerHTML=window.data.products.map(p=>`<div class="item"><b>${safe(p.title)}</b> <span class="small">${safe(p.price||"")}</span><button onclick="editProduct('${p.id}')">Edit</button><button class="red" onclick="delProduct('${p.id}')">Delete</button></div>`).join("")||"No products yet.";
-$("categories").innerHTML=window.data.categories.map(c=>`<div class="item">${safe(c.name)} <button class="red" onclick="delCategory('${c.id}')">Delete</button></div>`).join("");
-$("banners").innerHTML=(window.data.config.banners||[]).map((b,i)=>`<div class="item">${safe(b.title)} <button class="red" onclick="delBanner(${i})">Delete</button></div>`).join("");
-$("certs").innerHTML=(window.data.config.certificates||[]).map((b,i)=>`<div class="item">${safe(b.title)} <button class="red" onclick="delCert(${i})">Delete</button></div>`).join("");
-}
-function safe(s){return String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-function clearProduct(){["pid","ptitle","price","cat","desc","specs","images","video"].forEach(x=>$(x).value="");$("files").value=""}
-function editProduct(id){let p=window.data.products.find(x=>x.id===id);if(!p)return;$("pid").value=p.id;$("ptitle").value=p.title||"";$("price").value=p.price||"";$("cat").value=p.category||"";$("desc").value=p.description||"";$("specs").value=p.specs||"";$("images").value=(p.images||[]).join("\\n");$("video").value=p.video||"";window.scrollTo(0,0)}
-async function saveProduct(){try{let imgs=$("images").value.split("\\n").map(x=>x.trim()).filter(Boolean);for(let f of $("files").files){let fd=new FormData();fd.append("file",f);let r=await fetch("/api/admin/upload",{method:"POST",body:fd});let j=await r.json();if(!r.ok)throw Error(j.error);imgs.push(j.url)}
-let p={id:$("pid").value||crypto.randomUUID(),title:$("ptitle").value,price:$("price").value,category:$("cat").value,description:$("desc").value,specs:$("specs").value,images:imgs,video:$("video").value,translations:window.data.products.find(x=>x.id===$("pid").value)?.translations||{}};
-await api("/api/admin/products","POST",p);clearProduct();await load();alert("Product saved")}catch(e){alert(e.message)}}
-async function delProduct(id){if(confirm("Delete this product?")){await api("/api/admin/products/"+id,"DELETE");await load()}}
-async function addCategory(){let name=$("catname").value.trim();if(!name)return;await api("/api/admin/categories","POST",{id:crypto.randomUUID(),name});$("catname").value="";await load()}
-async function delCategory(id){await api("/api/admin/categories/"+id,"DELETE");await load()}
-async function saveConfig(){let c={...window.data.config,company:$("company").value,about:$("about").value,whatsapp:$("whatsapp").value.replace(/\\D/g,""),email:$("email").value,factoryVideo:$("factoryVideo").value};await api("/api/admin/config","POST",c);await load();alert("Settings saved")}
-async function addBanner(){let c=window.data.config;c.banners=[...(c.banners||[]),{id:crypto.randomUUID(),title:$("btitle").value,description:$("bdesc").value,image:$("bimage").value}];await api("/api/admin/config","POST",c);await load()}
-async function delBanner(i){let c=window.data.config;c.banners.splice(i,1);await api("/api/admin/config","POST",c);await load()}
-async function addCert(){let c=window.data.config;c.certificates=[...(c.certificates||[]),{id:crypto.randomUUID(),title:$("ctitle").value,image:$("cimage").value}];await api("/api/admin/config","POST",c);await load()}
-async function delCert(i){let c=window.data.config;c.certificates.splice(i,1);await api("/api/admin/config","POST",c);await load()}
-async function translateAll(){try{$("transmsg").textContent="Translating...";let r=await api("/api/admin/translate","POST",{lang:$("target").value});$("transmsg").textContent=r.message;await load()}catch(e){$("transmsg").textContent=e.message}}
-(async()=>{try{await load();$("login").style.display="none";$("app").style.display="block"}catch(e){}})();
-</script></body></html>`);
+  $("products").innerHTML = window.data.products.map(p =>
+    "<div class=\"item\">" +
+    "<b>" + safe(p.title) + "</b> " +
+    "<span class=\"small\">" + safe(p.price || "") + "</span>" +
+    "<button onclick=\"editProduct('" + p.id + "')\">Edit</button>" +
+    "<button class=\"red\" onclick=\"delProduct('" + p.id + "')\">Delete</button>" +
+    "</div>"
+  ).join("") || "No products yet.";
+
+  $("categories").innerHTML = window.data.categories.map(c =>
+    "<div class=\"item\">" +
+    safe(c.name) +
+    " <button class=\"red\" onclick=\"delCategory('" + c.id + "')\">Delete</button>" +
+    "</div>"
+  ).join("");
+
+  $("banners").innerHTML = (window.data.config.banners || []).map((b, i) =>
+    "<div class=\"item\">" +
+    safe(b.title) +
+    " <button class=\"red\" onclick=\"delBanner(" + i + ")\">Delete</button>" +
+    "</div>"
+  ).join("");
+
+  $("certs").innerHTML = (window.data.config.certificates || []).map((b, i) =>
+    "<div class=\"item\">" +
+    safe(b.title) +
+    " <button class=\"red\" onclick=\"delCert(" + i + ")\">Delete</button>" +
+    "</div>"
+  ).join("");
 }
 async function apiHandler(req,env,url) {
   const path=url.pathname,method=req.method;
