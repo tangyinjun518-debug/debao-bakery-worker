@@ -250,7 +250,7 @@ export default {
     "<url><loc>" + url.origin + "/" + l + "/product/" + encodeURIComponent(p.id) + "</loc></url>"
   )
 ]).join("");
-      return new Response(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}</urlset>`,{headers:{"content-type":"application/xml"}});
+     return new Response('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + urls + '</urlset>', {headers: {"content-type": "application/xml"}});
     }
     if(url.pathname==="/")return Response.redirect(url.origin+"/en/",302);
     return await publicPage(req,env,url);
