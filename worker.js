@@ -134,37 +134,39 @@ async function login(){try{await api("/api/login","POST",{password:$("pw").value
 async function logout(){await api("/api/logout","POST",{}).catch(()=>{});location.reload()}
 async function load(){let d=await api("/api/admin/bootstrap");window.data=d;render();$("company").value=d.config.company||"";$("about").value=d.config.about||"";$("whatsapp").value=d.config.whatsapp||"";$("email").value=d.config.email||"";$("factoryVideo").value=d.config.factoryVideo||""}
 
+
 function render(){
   $("products").innerHTML = window.data.products.map(p =>
-    "<div class=\"item\">" +
-    "<b>" + safe(p.title) + "</b> " +
-    "<span class=\"small\">" + safe(p.price || "") + "</span>" +
-    "<button onclick=\"editProduct('" + p.id + "')\">Edit</button>" +
-    "<button class=\"red\" onclick=\"delProduct('" + p.id + "')\">Delete</button>" +
-    "</div>"
+    '<div class="item">' +
+    '<b>' + safe(p.title) + '</b> ' +
+    '<span class="small">' + safe(p.price || "") + '</span>' +
+    '<button onclick="editProduct(\'' + p.id + '\')">Edit</button>' +
+    '<button class="red" onclick="delProduct(\'' + p.id + '\')">Delete</button>' +
+    '</div>'
   ).join("") || "No products yet.";
 
   $("categories").innerHTML = window.data.categories.map(c =>
-    "<div class=\"item\">" +
+    '<div class="item">' +
     safe(c.name) +
-    " <button class=\"red\" onclick=\"delCategory('" + c.id + "')\">Delete</button>" +
-    "</div>"
+    ' <button class="red" onclick="delCategory(\'' + c.id + '\')">Delete</button>' +
+    '</div>'
   ).join("");
 
   $("banners").innerHTML = (window.data.config.banners || []).map((b, i) =>
-    "<div class=\"item\">" +
+    '<div class="item">' +
     safe(b.title) +
-    " <button class=\"red\" onclick=\"delBanner(" + i + ")\">Delete</button>" +
-    "</div>"
+    ' <button class="red" onclick="delBanner(' + i + ')">Delete</button>' +
+    '</div>'
   ).join("");
 
   $("certs").innerHTML = (window.data.config.certificates || []).map((b, i) =>
-    "<div class=\"item\">" +
+    '<div class="item">' +
     safe(b.title) +
-    " <button class=\"red\" onclick=\"delCert(" + i + ")\">Delete</button>" +
-    "</div>"
+    ' <button class="red" onclick="delCert(' + i + ')">Delete</button>' +
+    '</div>'
   ).join("");
 }
+
 </script></body></html>`);
 }
 
