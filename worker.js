@@ -1,1186 +1,248 @@
-const DEFAULT_CATEGORIES = [
-  {id:'line',name:'Bakery Production Line',zh:'烘焙生产线'},
-  {id:'divider',name:'Dough Divider & Rounder',zh:'面团分割滚圆机'},
-  {id:'mixer',name:'Dough Mixer',zh:'和面机'},
-  {id:'moulder',name:'Bread Moulder',zh:'吐司/面包整形机'},
-  {id:'oven',name:'Commercial Oven',zh:'商用烤箱'},
-  {id:'proofer',name:'Dough Proofer',zh:'醒发箱'},
-  {id:'sheeter',name:'Dough Sheeter',zh:'压面机'},
-  {id:'food',name:'Food Processing Equipment',zh:'食品加工设备'}
-];
 
-const DEFAULT_CONFIG = {
-  about:'Guangzhou Depauw Machinery Co., Ltd. is a factory-direct supplier of commercial bakery and food processing machinery in Guangzhou, China. We supply practical equipment for bakeries, food factories and distributors worldwide. Contact us for machine details, factory prices and customized solutions.',
-  banners:[],
-  factoryVideo:'',
-  email:'tangyinjun518@gmail.com',
-  whatsapp:'8618124272578'
-};
-
-const json = (data,status=200,headers={}) =>
-  new Response(JSON.stringify(data),{
-    status,
-    headers:{
-      'content-type':'application/json; charset=utf-8',
-      ...headers
-    }
-  });
-
-const html = (body,status=200,headers={}) =>
-  new Response(body,{
-    status,
-    headers:{
-      'content-type':'text/html; charset=utf-8',
-      ...headers
-    }
-  });
-
-const safe = v => typeof v === 'string' ? v.trim() : '';
-
-const validUrl = value => {
-  try {
-    const u=new URL(value);
-    return ['http:','https:'].includes(u.protocol) ? u.href : '';
-  } catch {
-    return '';
+const LANGS = ["en","zh","ms","id","th","vi","ar","es"];
+const NAMES = {en:"English",zh:"简体中文",ms:"Bahasa Melayu",id:"Bahasa Indonesia",th:"ไทย",vi:"Tiếng Việt",ar:"العربية",es:"Español"};
+const DEFAULTS = {
+  products: [],
+  categories: [],
+  config: {
+    company: "Guangzhou Depauw Machinery Co., Ltd.",
+    about: "We are a factory-direct manufacturer of commercial bakery equipment and food processing machinery in Guangzhou, China.",
+    whatsapp: "8618124272578",
+    email: "tangyinjun518@gmail.com",
+    factoryVideo: "",
+    banners: [],
+    certificates: []
   }
 };
-
-export default {
- async fetch(request,env){
-  const url=new URL(request.url);
-  const path=url.pathname;
-  const db=env.DEBAO_DB || env.DB;
-  const cors={'cache-control':'no-store'};
-
-  const get=async(key,fallback)=>{
-    if(!db)return fallback;
-    try{
-      const v=await db.get(key);
-      return v?JSON.parse(v):fallback;
-    }catch{
-      return fallback;
-    }
-  };
-
-  const put=async(key,value)=>{
-    if(!db)throw new Error('KV binding missing: DEBAO_DB');
-    await db.put(key,JSON.stringify(value));
-  };
-
-  const cfg=await get('siteConfig',DEFAULT_CONFIG);
-  const cats=await get('categories',DEFAULT_CATEGORIES);
-  const products=await get('products',[]);
-
-  async function sign(payload){
-   const secret=env.SESSION_SECRET || env.ADMIN_PASSWORD;
-   if(!secret) throw new Error('Set SESSION_SECRET in Worker Secrets');
-
-   const key=await crypto.subtle.importKey(
-     'raw',
-     new TextEncoder().encode(secret),
-     {name:'HMAC',hash:'SHA-256'},
-     false,
-     ['sign']
-   );
-
-   const sig=await crypto.subtle.sign(
-     'HMAC',
-     key,
-     new TextEncoder().encode(payload)
-   );
-
-   return btoa(String.fromCharCode(...new Uint8Array(sig)))
-     .replace(/\+/g,'-')
-     .replace(/\//g,'_')
-     .replace(/=+$/,'');
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const json = (data,status=200) => new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json;charset=utf-8","cache-control":"no-store"}});
+const html = (s,status=200) => new Response(s,{status,headers:{"content-type":"text/html;charset=utf-8","x-content-type-options":"nosniff"}});
+const read = async (env,key,fallback) => {
+  try { const v=await env.DB.get(key); return v?JSON.parse(v):fallback; } catch { return fallback; }
+};
+const save = (env,key,value) => env.DB.put(key,JSON.stringify(value));
+const cookieName = "debao_admin";
+const b64 = b => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/=/g,"").replace(/\+/g,"-").replace(/\//g,"_");
+const unb64 = s => Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")+"=".repeat((4-s.length%4)%4)),c=>c.charCodeAt(0));
+async function sign(payload,secret) {
+  const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
+  return b64(await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(payload)));
+}
+async function token(secret) {
+  const p=b64(new TextEncoder().encode(JSON.stringify({exp:Date.now()+86400000})));
+  return p+"."+await sign(p,secret);
+}
+async function authorized(req,env) {
+  const c=req.headers.get("Cookie")||"";
+  const m=c.match(new RegExp("(?:^|;\\s*)"+cookieName+"=([^;]+)"));
+  if(!m||!env.ADMIN_PASSWORD)return false;
+  const [p,s]=m[1].split(".");
+  if(!p||!s||s!==await sign(p,env.ADMIN_PASSWORD))return false;
+  try { return JSON.parse(new TextDecoder().decode(unb64(p))).exp>Date.now(); } catch { return false; }
+}
+const needAuth = async (req,env) => await authorized(req,env);
+async function body(req) { try{return await req.json();}catch{return {};} }
+function langFrom(path) {
+  const l=path.split("/")[1];
+  return LANGS.includes(l)?l:"en";
+}
+function pathLang(path) {
+  const l=langFrom(path);
+  return "/"+l+"/";
+}
+function t(lang,en,zh) { return lang==="zh"?zh:en; }
+function pick(obj,lang,field) {
+  return obj?.translations?.[lang]?.[field] || obj?.[field] || "";
+}
+function layout(lang,title,content,config) {
+  const rtl=lang==="ar";
+  const links=LANGS.map(l=>`<a href="/${l}/">${NAMES[l]}</a>`).join("");
+  const wa=(config.whatsapp||"8618124272578").replace(/\D/g,"");
+  return `<!doctype html><html lang="${lang}" dir="${rtl?"rtl":"ltr"}"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(title)}</title><meta name="description" content="${esc(config.about)}">
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="">
+${LANGS.map(l=>`<link rel="alternate" hreflang="${l}" href="/${l}/">`).join("")}
+<link rel="alternate" hreflang="x-default" href="/en/">
+<style>
+*{box-sizing:border-box}body{margin:0;font:16px Arial,sans-serif;color:#202833;background:#fff;line-height:1.6}
+a{color:inherit;text-decoration:none}.top{background:#172b43;color:#fff;padding:12px 5%;display:flex;justify-content:space-between;gap:15px;flex-wrap:wrap}
+.top a{margin:0 7px;font-size:13px}.nav{padding:20px 5%;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #eee;gap:20px;flex-wrap:wrap}
+.logo{font-size:22px;font-weight:bold;color:#172b43}.navlinks{display:flex;gap:20px;flex-wrap:wrap}
+.hero{padding:65px 6%;background:#edf2f7;text-align:center}.hero h1{font-size:38px;margin:0 0 15px}.hero p{max-width:750px;margin:0 auto 25px;color:#526170}
+.btn{display:inline-block;background:#e58b27;color:white;padding:12px 23px;border-radius:4px;font-weight:bold}
+.wrap{max-width:1200px;margin:auto;padding:45px 5%}.section-title{text-align:center;margin:0 0 30px;font-size:28px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:22px}
+.card{border:1px solid #e5e8ec;border-radius:7px;overflow:hidden;background:white}.card img{width:100%;height:210px;object-fit:cover;background:#f3f4f6}
+.cardbody{padding:17px}.card h3{margin:0 0 8px}.muted{color:#687584;font-size:14px}
+.detail{display:grid;grid-template-columns:1fr 1fr;gap:35px}.detail img{max-width:100%;border-radius:6px}.gallery{display:flex;gap:10px;flex-wrap:wrap}.gallery img{width:100px;height:80px;object-fit:cover}
+footer{background:#172b43;color:#fff;padding:35px 5%;text-align:center;margin-top:30px}
+input,textarea,select,button{font:inherit;padding:10px;border:1px solid #ccd3da;border-radius:4px}
+@media(max-width:700px){.detail{grid-template-columns:1fr}.hero h1{font-size:29px}}
+</style></head><body>
+<div class="top"><span>${esc(config.company)}</span><span><a href="mailto:${esc(config.email)}">${esc(config.email)}</a><a href="https://wa.me/${esc(wa)}">WhatsApp</a></span></div>
+<header class="nav"><a class="logo" href="/${lang}/">${esc(config.company)}</a><nav class="navlinks"><a href="/${lang}/">${t(lang,"Home","首页")}</a><a href="/${lang}/#products">${t(lang,"Products","产品中心")}</a><a href="/${lang}/#about">${t(lang,"About Us","关于我们")}</a><a href="/${lang}/#contact">${t(lang,"Contact","联系我们")}</a></nav></header>
+<div style="background:#f7f8fa;padding:9px 5%;text-align:center">${links}</div>
+${content}
+<footer><h3>${esc(config.company)}</h3><p>${esc(config.about)}</p><p>${esc(config.email)}　|　WhatsApp: +${esc(wa)}</p><a class="btn" href="https://wa.me/${esc(wa)}">${t(lang,"Contact us on WhatsApp","通过 WhatsApp 联系我们")}</a></footer>
+</body></html>`;
+}
+function productCard(p,lang) {
+  const title=pick(p,lang,"title"),desc=pick(p,lang,"description");
+  const img=p.images?.[0]||"";
+  return `<article class="card"><a href="/${lang}/product/${encodeURIComponent(p.id)}"><img src="${esc(img)}" alt="${esc(title)}" loading="lazy"></a><div class="cardbody"><h3><a href="/${lang}/product/${encodeURIComponent(p.id)}">${esc(title)}</a></h3><p class="muted">${esc(desc).slice(0,150)}</p><a class="btn" href="/${lang}/product/${encodeURIComponent(p.id)}">${lang==="zh"?"查看详情":"View Details"}</a></div></article>`;
+}
+async function publicPage(req,env,url) {
+  const products=await read(env,"products",[]);
+  const cfg={...DEFAULTS.config,...await read(env,"config",DEFAULTS.config)};
+  const lang=langFrom(url.pathname);
+  const parts=url.pathname.split("/").filter(Boolean);
+  if(parts[1]==="product"&&parts[2]) {
+    const p=products.find(x=>x.id===decodeURIComponent(parts[2]));
+    if(!p)return html("Product not found",404);
+    const title=pick(p,lang,"title");
+    const images=(p.images||[]).map(i=>`<img src="${esc(i)}" alt="${esc(title)}">`).join("");
+    const specs=p.specs||"";
+    const content=`<main class="wrap"><div class="detail"><div><img src="${esc(p.images?.[0]||"")}" alt="${esc(title)}"><div class="gallery">${images}</div></div><div><h1>${esc(title)}</h1><p>${esc(p.price||"Contact for price")}</p><p>${esc(pick(p,lang,"description"))}</p><h3>${lang==="zh"?"技术参数":"Specifications"}</h3><div>${esc(specs).replace(/\n/g,"<br>")}</div><p><a class="btn" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent("I am interested in "+title)}">${lang==="zh"?"询问价格":"Send Inquiry"}</a></p>${p.video?`<p><a href="${esc(p.video)}" target="_blank" rel="noopener">Watch Product Video</a></p>`:""}</div></div></main>`;
+    return html(layout(lang,title,content,cfg));
   }
-
-  const cookieVal=request.headers.get('Cookie')||'';
-
-  async function loggedIn(){
-   const m=cookieVal.match(/(?:^|; )db_admin=([^;]+)/);
-   if(!m)return false;
-
-   const token=decodeURIComponent(m[1]);
-   const parts=token.split('.');
-   if(parts.length!==2)return false;
-
-   try{
-     return await sign(parts[0])===parts[1] &&
-       Number(parts[0])>Date.now();
-   }catch{
-     return false;
-   }
+  const cats=await read(env,"categories",[]);
+  const banners=cfg.banners||[];
+  const banner=banners[0];
+  const hero=banner?`<section class="hero" style="${banner.image?`background:linear-gradient(#172b4366,#172b4366),url('${esc(banner.image)}') center/cover;color:white`:""}"><h1>${esc(pick(banner,lang,"title")||"Commercial Bakery Equipment")}</h1><p>${esc(pick(banner,lang,"description")||"Factory-direct bakery machinery and food processing equipment from Guangzhou, China.")}</p><a class="btn" href="#products">${lang==="zh"?"浏览产品":"Explore Products"}</a></section>`:`<section class="hero"><h1>Commercial Bakery & Food Processing Equipment</h1><p>${esc(cfg.about)}</p><a class="btn" href="#products">Explore Products</a></section>`;
+  const categoryHtml=cats.length?`<div class="wrap"><h2 class="section-title">${lang==="zh"?"产品分类":"Product Categories"}</h2><div class="cards">${cats.map(c=>`<div class="card"><div class="cardbody"><h3>${esc(pick(c,lang,"name"))}</h3></div></div>`).join("")}</div></div>`:"";
+  const content=`${hero}${categoryHtml}<section class="wrap" id="products"><h2 class="section-title">${lang==="zh"?"产品中心":"Our Products"}</h2><div class="cards">${products.map(p=>productCard(p,lang)).join("")||"<p>No products have been added yet. Please visit again soon.</p>"}</div></section><section class="wrap" id="about"><h2 class="section-title">${lang==="zh"?"关于我们":"About Our Factory"}</h2><p>${esc(cfg.about)}</p>${cfg.factoryVideo?`<p><a class="btn" href="${esc(cfg.factoryVideo)}" target="_blank" rel="noopener">Watch Factory Video</a></p>`:""}</section><section class="wrap" id="contact"><h2 class="section-title">${lang==="zh"?"联系我们":"Contact Us"}</h2><p>${esc(cfg.company)}</p><p>${esc(cfg.email)}</p><a class="btn" href="https://wa.me/${esc(cfg.whatsapp)}">WhatsApp</a></section>`;
+  return html(layout(lang,cfg.company,content,cfg));
+}
+function adminPage() {
+return html(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Depauw Admin</title><style>
+body{font:15px Arial;background:#f3f5f8;margin:0;color:#243244}header{background:#172b43;color:white;padding:18px 4%;display:flex;justify-content:space-between}main{max-width:1100px;margin:25px auto;padding:0 15px}.box{background:white;padding:20px;margin:15px 0;border-radius:8px;box-shadow:0 1px 5px #ddd}input,textarea,select{width:100%;padding:10px;margin:6px 0 12px;border:1px solid #ccd3da;border-radius:4px;box-sizing:border-box}textarea{min-height:85px}button{background:#1769aa;color:white;border:0;padding:10px 17px;border-radius:4px;cursor:pointer;margin:4px}button.red{background:#b83232}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.item{border-bottom:1px solid #ddd;padding:12px 0}.small{font-size:12px;color:#667}#app{display:none}@media(max-width:650px){.row{grid-template-columns:1fr}}</style></head><body>
+<header><b>Guangzhou Depauw Machinery - Admin</b><button onclick="logout()">Log out</button></header><main>
+<div id="login" class="box"><h2>Admin Login</h2><input id="pw" type="password" placeholder="Admin password"><button onclick="login()">Log in</button><p id="err"></p></div>
+<div id="app">
+<div class="box"><h2>Products</h2><div id="products"></div><h3 id="formtitle">Add / Edit Product</h3><input id="pid" type="hidden"><label>Product title</label><input id="ptitle"><label>Price</label><input id="price" placeholder="Contact for price"><label>Category</label><input id="cat"><label>Description</label><textarea id="desc"></textarea><label>Specifications (one line per item)</label><textarea id="specs"></textarea><label>Product images (select multiple)</label><input id="files" type="file" accept="image/*" multiple><label>Existing image URLs (one URL per line)</label><textarea id="images"></textarea><label>Facebook / YouTube video URL</label><input id="video"><button onclick="saveProduct()">Save Product</button><button onclick="clearProduct()">New Product</button></div>
+<div class="box"><h2>Categories</h2><div id="categories"></div><input id="catname" placeholder="Category name"><button onclick="addCategory()">Add Category</button></div>
+<div class="box"><h2>Website Settings</h2><label>Company name</label><input id="company"><label>Company introduction</label><textarea id="about"></textarea><div class="row"><div><label>WhatsApp number (international format, numbers only)</label><input id="whatsapp"></div><div><label>Email</label><input id="email"></div></div><label>Factory video URL</label><input id="factoryVideo"><button onclick="saveConfig()">Save Settings</button></div>
+<div class="box"><h2>Homepage Banners</h2><div id="banners"></div><input id="btitle" placeholder="Banner title"><input id="bdesc" placeholder="Banner description"><input id="bimage" placeholder="Banner image URL"><button onclick="addBanner()">Add Banner</button></div>
+<div class="box"><h2>Certificates</h2><div id="certs"></div><input id="ctitle" placeholder="Certificate title"><input id="cimage" placeholder="Certificate image URL"><button onclick="addCert()">Add Certificate</button></div>
+<div class="box"><h2>AI Translation</h2><p class="small">Translate product titles and descriptions from English. Machine translations should be checked and edited before publishing.</p><select id="target">${LANGS.filter(l=>l!=="en").map(l=>`<option value="${l}">${NAMES[l]}</option>`).join("")}</select><button onclick="translateAll()">Translate all products</button><p id="transmsg"></p></div>
+</div></main><script>
+const $=id=>document.getElementById(id);
+async function api(path,method="GET",data){let r=await fetch(path,{method,headers:{"content-type":"application/json"},body:data?JSON.stringify(data):undefined});let j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||"Request failed");return j}
+async function login(){try{await api("/api/login","POST",{password:$("pw").value});$("login").style.display="none";$("app").style.display="block";await load()}catch(e){$("err").textContent=e.message}}
+async function logout(){await api("/api/logout","POST",{}).catch(()=>{});location.reload()}
+async function load(){let d=await api("/api/admin/bootstrap");window.data=d;render();$("company").value=d.config.company||"";$("about").value=d.config.about||"";$("whatsapp").value=d.config.whatsapp||"";$("email").value=d.config.email||"";$("factoryVideo").value=d.config.factoryVideo||""}
+function render(){
+$("products").innerHTML=window.data.products.map(p=>`<div class="item"><b>${safe(p.title)}</b> <span class="small">${safe(p.price||"")}</span><button onclick="editProduct('${p.id}')">Edit</button><button class="red" onclick="delProduct('${p.id}')">Delete</button></div>`).join("")||"No products yet.";
+$("categories").innerHTML=window.data.categories.map(c=>`<div class="item">${safe(c.name)} <button class="red" onclick="delCategory('${c.id}')">Delete</button></div>`).join("");
+$("banners").innerHTML=(window.data.config.banners||[]).map((b,i)=>`<div class="item">${safe(b.title)} <button class="red" onclick="delBanner(${i})">Delete</button></div>`).join("");
+$("certs").innerHTML=(window.data.config.certificates||[]).map((b,i)=>`<div class="item">${safe(b.title)} <button class="red" onclick="delCert(${i})">Delete</button></div>`).join("");
+}
+function safe(s){return String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function clearProduct(){["pid","ptitle","price","cat","desc","specs","images","video"].forEach(x=>$(x).value="");$("files").value=""}
+function editProduct(id){let p=window.data.products.find(x=>x.id===id);if(!p)return;$("pid").value=p.id;$("ptitle").value=p.title||"";$("price").value=p.price||"";$("cat").value=p.category||"";$("desc").value=p.description||"";$("specs").value=p.specs||"";$("images").value=(p.images||[]).join("\\n");$("video").value=p.video||"";window.scrollTo(0,0)}
+async function saveProduct(){try{let imgs=$("images").value.split("\\n").map(x=>x.trim()).filter(Boolean);for(let f of $("files").files){let fd=new FormData();fd.append("file",f);let r=await fetch("/api/admin/upload",{method:"POST",body:fd});let j=await r.json();if(!r.ok)throw Error(j.error);imgs.push(j.url)}
+let p={id:$("pid").value||crypto.randomUUID(),title:$("ptitle").value,price:$("price").value,category:$("cat").value,description:$("desc").value,specs:$("specs").value,images:imgs,video:$("video").value,translations:window.data.products.find(x=>x.id===$("pid").value)?.translations||{}};
+await api("/api/admin/products","POST",p);clearProduct();await load();alert("Product saved")}catch(e){alert(e.message)}}
+async function delProduct(id){if(confirm("Delete this product?")){await api("/api/admin/products/"+id,"DELETE");await load()}}
+async function addCategory(){let name=$("catname").value.trim();if(!name)return;await api("/api/admin/categories","POST",{id:crypto.randomUUID(),name});$("catname").value="";await load()}
+async function delCategory(id){await api("/api/admin/categories/"+id,"DELETE");await load()}
+async function saveConfig(){let c={...window.data.config,company:$("company").value,about:$("about").value,whatsapp:$("whatsapp").value.replace(/\\D/g,""),email:$("email").value,factoryVideo:$("factoryVideo").value};await api("/api/admin/config","POST",c);await load();alert("Settings saved")}
+async function addBanner(){let c=window.data.config;c.banners=[...(c.banners||[]),{id:crypto.randomUUID(),title:$("btitle").value,description:$("bdesc").value,image:$("bimage").value}];await api("/api/admin/config","POST",c);await load()}
+async function delBanner(i){let c=window.data.config;c.banners.splice(i,1);await api("/api/admin/config","POST",c);await load()}
+async function addCert(){let c=window.data.config;c.certificates=[...(c.certificates||[]),{id:crypto.randomUUID(),title:$("ctitle").value,image:$("cimage").value}];await api("/api/admin/config","POST",c);await load()}
+async function delCert(i){let c=window.data.config;c.certificates.splice(i,1);await api("/api/admin/config","POST",c);await load()}
+async function translateAll(){try{$("transmsg").textContent="Translating...";let r=await api("/api/admin/translate","POST",{lang:$("target").value});$("transmsg").textContent=r.message;await load()}catch(e){$("transmsg").textContent=e.message}}
+(async()=>{try{await load();$("login").style.display="none";$("app").style.display="block"}catch(e){}})();
+</script></body></html>`);
+}
+async function apiHandler(req,env,url) {
+  const path=url.pathname,method=req.method;
+  if(path==="/api/login"&&method==="POST"){
+    const b=await body(req);
+    if(!env.ADMIN_PASSWORD)return json({error:"ADMIN_PASSWORD secret is not configured"},500);
+    if(b.password!==env.ADMIN_PASSWORD)return json({error:"Incorrect password"},401);
+    const tok=await token(env.ADMIN_PASSWORD);
+    return new Response(JSON.stringify({ok:true}),{headers:{"content-type":"application/json","set-cookie":cookieName+"="+tok+"; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=86400"}});
   }
-
-  const requireAdmin=async()=>
-    await loggedIn() ? null : json({error:'Unauthorized'},401,cors);
-
-  if(path==='/robots.txt'){
-    return new Response(
-      `User-agent: *
-Allow: /
-Sitemap: ${url.origin}/sitemap.xml
-`,
-      {headers:{'content-type':'text/plain; charset=utf-8'}}
-    );
+  if(path==="/api/logout")return new Response("{}",{headers:{"content-type":"application/json","set-cookie":cookieName+"=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0"}});
+  if(!await needAuth(req,env))return json({error:"Unauthorized"},401);
+  if(path==="/api/admin/bootstrap")return json({products:await read(env,"products",[]),categories:await read(env,"categories",[]),config:{...DEFAULTS.config,...await read(env,"config",DEFAULTS.config)}});
+  if(path==="/api/admin/products"&&method==="POST"){
+    const p=await body(req);if(!p.title)return json({error:"Product title is required"},400);
+    let a=await read(env,"products",[]),i=a.findIndex(x=>x.id===p.id);
+    if(i>=0)a[i]={...a[i],...p};else a.unshift(p);
+    await save(env,"products",a);return json({ok:true});
   }
-
-  if(path==='/sitemap.xml'){
-    return new Response(
-      `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${url.origin}/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url></urlset>`,
-      {headers:{'content-type':'application/xml; charset=utf-8'}}
-    );
+  if(path.startsWith("/api/admin/products/")&&method==="DELETE"){
+    const id=decodeURIComponent(path.split("/").pop());let a=await read(env,"products",[]);
+    a=a.filter(p=>p.id!==id);await save(env,"products",a);return json({ok:true});
   }
-
-  if(path==='/api/login' && request.method==='POST'){
-   if(!env.ADMIN_PASSWORD){
-     return json({
-       error:'Please set ADMIN_PASSWORD in Cloudflare Worker Secrets.'
-     },500);
-   }
-
-   let body={};
-   try{
-     body=await request.json();
-   }catch{}
-
-   if(typeof body.password!=='string' ||
-      body.password!==env.ADMIN_PASSWORD){
-     return json({error:'Password is incorrect.'},401);
-   }
-
-   const exp=String(Date.now()+8*60*60*1000);
-   const token=exp+'.'+await sign(exp);
-
-   return json(
-     {ok:true},
-     200,
-     {
-       'set-cookie':`db_admin=${encodeURIComponent(token)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800`,
-       'cache-control':'no-store'
-     }
-   );
+  if(path==="/api/admin/categories"&&method==="POST"){
+    const b=await body(req);let a=await read(env,"categories",[]);a.push(b);await save(env,"categories",a);return json({ok:true});
   }
-
-  if(path==='/api/logout' && request.method==='POST'){
-    return json(
-      {ok:true},
-      200,
-      {
-        'set-cookie':'db_admin=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'
+  if(path.startsWith("/api/admin/categories/")&&method==="DELETE"){
+    const id=decodeURIComponent(path.split("/").pop());let a=await read(env,"categories",[]);
+    await save(env,"categories",a.filter(x=>x.id!==id));return json({ok:true});
+  }
+  if(path==="/api/admin/config"&&method==="POST"){
+    const c=await body(req);await save(env,"config",c);return json({ok:true});
+  }
+  if(path==="/api/admin/upload"&&method==="POST"){
+    if(!env.PRODUCT_IMAGES)return json({error:"R2 binding PRODUCT_IMAGES is missing"},500);
+    const form=await req.formData(),file=form.get("file");
+    if(!file||!file.size)return json({error:"Please choose an image"},400);
+    if(!file.type.startsWith("image/"))return json({error:"Only image files are allowed"},400);
+    if(file.size>8*1024*1024)return json({error:"Image must be smaller than 8 MB"},400);
+    const ext=(file.type.split("/")[1]||"jpg").replace(/[^a-z0-9]/gi,"");
+    const key="uploads/"+crypto.randomUUID()+"."+ext;
+    await env.PRODUCT_IMAGES.put(key,file.stream(),{httpMetadata:{contentType:file.type}});
+    return json({ok:true,url:"/media/"+key});
+  }
+  if(path==="/api/admin/translate"&&method==="POST"){
+    if(!env.AI)return json({error:"Workers AI binding AI is missing"},500);
+    const {lang}=await body(req);if(!LANGS.includes(lang)||lang==="en")return json({error:"Unsupported language"},400);
+    const codes={zh:"zh",ms:"ms",id:"id",th:"th",vi:"vi",ar:"ar",es:"es"};
+    const a=await read(env,"products",[]);
+    for(const p of a){
+      p.translations=p.translations||{};
+      const tr={};
+      for(const field of ["title","description"]){
+        const source=p[field]||"";if(!source)continue;
+        const out=await env.AI.run("@cf/meta/m2m100-1.2b",{text:source,source_lang:"en",target_lang:codes[lang]});
+        tr[field]=out.translated_text||source;
       }
-    );
-  }
-
-  if(path==='/api/bootstrap'){
-    return json({
-      categories:cats,
-      products,
-      siteConfig:cfg
-    },200,cors);
-  }
-
-  if(path.startsWith('/uploads/')){
-   if(!env.PRODUCT_IMAGES){
-     return new Response('Image storage is not configured',{status:503});
-   }
-
-   const key=decodeURIComponent(path.slice('/uploads/'.length));
-
-   if(!/^[a-zA-Z0-9/_-]+\.(jpg|jpeg|png|webp|gif)$/i.test(key)){
-     return new Response('Not found',{status:404});
-   }
-
-   const obj=await env.PRODUCT_IMAGES.get(key);
-   if(!obj)return new Response('Not found',{status:404});
-
-   const h=new Headers();
-   obj.writeHttpMetadata(h);
-   h.set('etag',obj.httpEtag);
-   h.set('cache-control','public, max-age=31536000, immutable');
-
-   return new Response(obj.body,{headers:h});
-  }
-
-  if(path==='/api/admin/status'){
-    const ok=await loggedIn();
-    return json({authenticated:ok});
-  }
-
-  if(path.startsWith('/api/admin/')){
-    const denied=await requireAdmin();
-    if(denied)return denied;
-  }
-
-  if(path==='/api/admin/upload' && request.method==='POST'){
-   if(!env.PRODUCT_IMAGES){
-     return json({error:'R2 binding PRODUCT_IMAGES is missing.'},503);
-   }
-
-   const form=await request.formData();
-   const files=form.getAll('images');
-
-   if(!files.length){
-     return json({error:'Choose at least one image.'},400);
-   }
-
-   const urls=[];
-
-   for(const file of files){
-    if(!(file instanceof File))continue;
-
-    if(!['image/jpeg','image/png','image/webp','image/gif'].includes(file.type)){
-      return json({
-        error:'Only JPG, PNG, WEBP and GIF images are allowed.'
-      },400);
+      p.translations[lang]={...(p.translations[lang]||{}),...tr};
     }
-
-    if(file.size>8*1024*1024){
-      return json({
-        error:'Each image must be 8MB or smaller.'
-      },400);
+    await save(env,"products",a);
+    return json({ok:true,message:"Translation completed. Please review and edit the translations before publishing."});
+  }
+  return json({error:"API endpoint not found"},404);
+}
+export default {
+ async fetch(req,env) {
+  try {
+    const url=new URL(req.url);
+    if(url.pathname.startsWith("/api/"))return await apiHandler(req,env,url);
+    if(url.pathname==="/admin"||url.pathname==="/admin/")return adminPage();
+    if(url.pathname.startsWith("/media/")){
+      if(!env.PRODUCT_IMAGES)return new Response("R2 not configured",{status:500});
+      const key=url.pathname.slice(7),obj=await env.PRODUCT_IMAGES.get(key);
+      if(!obj)return new Response("Not found",{status:404});
+      const h=new Headers();obj.writeHttpMetadata(h);h.set("etag",obj.httpEtag);h.set("cache-control","public, max-age=31536000, immutable");
+      return new Response(obj.body,{headers:h});
     }
-
-    const ext=({
-      'image/jpeg':'jpg',
-      'image/png':'png',
-      'image/webp':'webp',
-      'image/gif':'gif'
-    })[file.type];
-
-    const key=`products/${crypto.randomUUID()}.${ext}`;
-
-    await env.PRODUCT_IMAGES.put(
-      key,
-      file.stream(),
-      {httpMetadata:{contentType:file.type}}
-    );
-
-    urls.push(`${url.origin}/uploads/${key}`);
-   }
-
-   return json({ok:true,urls});
-  }
-
-  if(path==='/api/admin/products' && request.method==='POST'){
-   let b;
-
-   try{
-     b=await request.json();
-   }catch{
-     return json({error:'Invalid JSON'},400);
-   }
-
-   let list=await get('products',[]);
-
-   if(b.action==='delete'){
-     list=list.filter(p=>p.id!==b.id);
-   }else if(b.action==='add'||b.action==='update'){
-    const item={
-      id:b.action==='add'?'p_'+crypto.randomUUID():safe(b.id),
-      cat:safe(b.cat)||'divider',
-      title:safe(b.title),
-      price:safe(b.price)||'Contact for Price',
-      desc:safe(b.desc),
-      specs:safe(b.specs),
-      imgs:Array.isArray(b.imgs)
-        ? b.imgs.map(validUrl).filter(Boolean).slice(0,8)
-        : [],
-      video:validUrl(b.video)
-    };
-
-    if(!item.title){
-      return json({error:'Product title is required.'},400);
+    if(url.pathname==="/robots.txt")return new Response("User-agent: *\nAllow: /\nSitemap: "+url.origin+"/sitemap.xml",{headers:{"content-type":"text/plain"}});
+    if(url.pathname==="/sitemap.xml"){
+      const products=await read(env,"products",[]);
+      const urls=LANGS.flatMap(l=>[`<url><loc>${url.origin}/${l}/</loc></url>`,...products.map(p=>`<url><loc>${url.origin}/${l}/product/${encodeURIComponent(p.id)}</loc></url>`)]).join("");
+      return new Response(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}</urlset>`,{headers:{"content-type":"application/xml"}});
     }
-
-    if(b.action==='add'){
-      list.unshift(item);
-    }else{
-      const i=list.findIndex(p=>p.id===item.id);
-      if(i<0)return json({error:'Product not found'},404);
-      list[i]=item;
-    }
-   }else{
-     return json({error:'Unknown action'},400);
-   }
-
-   await put('products',list);
-   return json({ok:true,products:list});
+    if(url.pathname==="/")return Response.redirect(url.origin+"/en/",302);
+    return await publicPage(req,env,url);
+  } catch(e) {
+    return new Response("Server error: "+(e?.message||"Unknown error"),{status:500,headers:{"content-type":"text/plain;charset=utf-8"}});
   }
-
-  if(path==='/api/admin/config' && request.method==='POST'){
-   let b;
-
-   try{
-     b=await request.json();
-   }catch{
-     return json({error:'Invalid JSON'},400);
-   }
-
-   const next={
-     ...cfg,
-     about:safe(b.about),
-     banners:Array.isArray(b.banners)
-       ? b.banners.map(validUrl).filter(Boolean).slice(0,6)
-       : [],
-     factoryVideo:validUrl(b.factoryVideo),
-     email:safe(b.email),
-     whatsapp:safe(b.whatsapp).replace(/\D/g,'')
-   };
-
-   await put('siteConfig',next);
-   return json({ok:true,siteConfig:next});
-  }
-
-  if(path==='/admin'){
-    return html(adminPage());
-  }
-
-  return html(storePage());
  }
 };
-
-function storePage(){
-return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Guangzhou Depauw Machinery | Commercial Bakery Equipment Manufacturer</title>
-<meta name="description" content="Factory-direct commercial bakery and food processing machinery from Guangzhou, China. Dough divider rounders, mixers, ovens, proofers and bread moulders.">
-<meta name="robots" content="index,follow">
-
-<style>
-:root{
-  --navy:#10243a;
-  --blue:#1769aa;
-  --gold:#e5a83b;
-  --ink:#182433;
-  --muted:#687789;
-  --bg:#f4f6f8
-}
-*{box-sizing:border-box}
-body{
-  margin:0;
-  font-family:Arial,sans-serif;
-  color:var(--ink);
-  background:white
-}
-a{color:inherit}
-.top{
-  background:var(--navy);
-  color:#fff;
-  padding:13px 5%;
-  display:flex;
-  justify-content:space-between;
-  gap:15px;
-  align-items:center;
-  font-size:13px
-}
-.top a{color:#fff;text-decoration:none}
-.nav{
-  padding:20px 5%;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  border-bottom:1px solid #e7ebef
-}
-.brand{
-  font-size:21px;
-  font-weight:800;
-  color:var(--navy)
-}
-.brand span{color:var(--gold)}
-.nav small{
-  display:block;
-  color:var(--muted);
-  font-size:11px;
-  letter-spacing:2px;
-  margin-top:4px
-}
-.hero{
-  background:
-    linear-gradient(100deg,rgba(8,28,48,.94),rgba(8,28,48,.48)),
-    url('https://images.unsplash.com/photo-1556910103-1c02745aae4d?auto=format&fit=crop&w=1800&q=85') center/cover;
-  color:#fff;
-  padding:100px 7%;
-  min-height:410px
-}
-.hero h1{
-  font-size:clamp(32px,5vw,54px);
-  max-width:760px;
-  line-height:1.08;
-  margin:0 0 20px
-}
-.hero p{
-  max-width:650px;
-  color:#e1e8ef;
-  line-height:1.7;
-  font-size:17px
-}
-.btn{
-  display:inline-block;
-  background:var(--gold);
-  color:#142438;
-  padding:14px 22px;
-  text-decoration:none;
-  font-weight:700;
-  border-radius:3px;
-  margin:12px 8px 0 0
-}
-.btn.alt{
-  background:transparent;
-  border:1px solid #fff;
-  color:#fff
-}
-.wrap{
-  max-width:1200px;
-  margin:auto;
-  padding:65px 22px
-}
-.eyebrow{
-  color:#b17a19;
-  font-weight:700;
-  letter-spacing:2px;
-  font-size:12px
-}
-.heading{
-  font-size:32px;
-  margin:9px 0 15px;
-  color:var(--navy)
-}
-.about{
-  max-width:850px;
-  color:var(--muted);
-  line-height:1.8
-}
-.filters{
-  display:flex;
-  flex-wrap:wrap;
-  gap:9px;
-  margin:28px 0
-}
-.filter{
-  border:1px solid #d9e0e7;
-  background:white;
-  padding:10px 15px;
-  border-radius:3px;
-  cursor:pointer
-}
-.filter.active{
-  background:var(--navy);
-  color:white;
-  border-color:var(--navy)
-}
-.grid{
-  display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(255px,1fr));
-  gap:22px
-}
-.product{
-  border:1px solid #e5e9ed;
-  background:#fff;
-  transition:.2s
-}
-.product:hover{
-  box-shadow:0 12px 30px #13283c16;
-  transform:translateY(-3px)
-}
-.product img{
-  width:100%;
-  height:220px;
-  object-fit:cover;
-  background:#eef1f4
-}
-.pbody{padding:18px}
-.product h3{
-  font-size:17px;
-  line-height:1.4;
-  margin:0 0 10px
-}
-.price{
-  font-weight:800;
-  color:#b87919
-}
-.desc{
-  color:var(--muted);
-  font-size:13px;
-  line-height:1.6;
-  min-height:42px
-}
-.spec{
-  white-space:pre-line;
-  font-size:12px;
-  color:#5d6b78;
-  background:#f6f8fa;
-  padding:10px;
-  margin-top:12px
-}
-.video{
-  display:inline-block;
-  margin-top:12px;
-  color:var(--blue);
-  font-size:13px;
-  font-weight:bold;
-  text-decoration:none
-}
-.contact{
-  background:var(--navy);
-  color:#fff
-}
-.contact .heading{color:#fff}
-.contact p{
-  color:#d3dde7;
-  line-height:1.8
-}
-.footer{
-  background:#0b1928;
-  color:#b8c3ce;
-  padding:25px 5%;
-  font-size:12px;
-  display:flex;
-  justify-content:space-between;
-  gap:15px;
-  flex-wrap:wrap
-}
-@media(max-width:650px){
-  .top{display:block;line-height:2}
-  .nav{align-items:flex-start}
-  .hero{padding:70px 22px}
-  .wrap{padding:45px 18px}
-}
-</style>
-</head>
-
-<body>
-<div class="top">
-  <span>Factory-direct bakery & food processing machinery · Guangzhou, China</span>
-  <span>
-    <a href="mailto:tangyinjun518@gmail.com">tangyinjun518@gmail.com</a>
-    |
-    <a href="https://wa.me/8618124272578" target="_blank" rel="noopener">
-      WhatsApp: +86 181 2427 2578
-    </a>
-  </span>
-</div>
-
-<div class="nav">
-  <div class="brand">
-    DEPAUW <span>MACHINERY</span>
-    <small>BAKERY EQUIPMENT MANUFACTURER</small>
-  </div>
-  <a class="btn" href="https://wa.me/8618124272578" target="_blank" rel="noopener">
-    GET A QUOTE
-  </a>
-</div>
-
-<section class="hero">
-  <div class="eyebrow" style="color:#f0bd5c">GUANGZHOU · CHINA</div>
-  <h1>Reliable Bakery Equipment. Direct from Our Factory.</h1>
-  <p>
-    Practical machinery for bakeries, food factories and distributors.
-    Tell us what you need and we will help you choose the right machine.
-  </p>
-  <a class="btn" href="https://wa.me/8618124272578" target="_blank" rel="noopener">
-    Contact on WhatsApp
-  </a>
-  <a class="btn alt" href="#products">Explore Products</a>
-</section>
-
-<section class="wrap">
-  <div class="eyebrow">ABOUT DEPAUW</div>
-  <h2 class="heading">Your Bakery Machinery Partner in China</h2>
-  <p class="about" id="about"></p>
-</section>
-
-<section class="wrap" id="products" style="background:#f7f9fb;max-width:none">
-  <div style="max-width:1200px;margin:auto">
-    <div class="eyebrow">OUR MACHINERY</div>
-    <h2 class="heading">Products & Equipment</h2>
-    <div class="filters" id="filters"></div>
-    <div class="grid" id="productsGrid"></div>
-  </div>
-</section>
-
-<section class="contact">
-  <div class="wrap">
-    <div class="eyebrow" style="color:#f0bd5c">LET'S TALK</div>
-    <h2 class="heading">Looking for Bakery Equipment?</h2>
-    <p>
-      Contact us with your machine requirements, production capacity and
-      destination country. We will get back to you with details and a quotation.
-    </p>
-    <a class="btn" href="https://wa.me/8618124272578" target="_blank" rel="noopener">
-      WhatsApp +86 181 2427 2578
-    </a>
-    <a class="btn alt" href="mailto:tangyinjun518@gmail.com">Send Email</a>
-    <p>Guangzhou Depauw Machinery Co., Ltd.<br>Guangzhou, Guangdong, China</p>
-  </div>
-</section>
-
-<footer class="footer">
-  <span>© <span id="year"></span> Guangzhou Depauw Machinery Co., Ltd.</span>
-  <a href="/admin">Admin</a>
-</footer>
-
-<script>
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({
-  '&':'&amp;',
-  '<':'&lt;',
-  '>':'&gt;',
-  '"':'&quot;',
-  "'":'&#39;'
-}[c]));
-
-let all=[],cats=[],active='all';
-
-async function init(){
-  document.getElementById('year').textContent=new Date().getFullYear();
-
-  try{
-    const r=await fetch('/api/bootstrap');
-    const d=await r.json();
-
-    all=d.products||[];
-    cats=d.categories||[];
-
-    document.getElementById('about').textContent=
-      d.siteConfig?.about||'';
-
-    drawFilters();
-    drawProducts();
-  }catch(e){
-    document.getElementById('productsGrid').textContent=
-      'Products are temporarily unavailable.';
-  }
-}
-
-function drawFilters(){
-  document.getElementById('filters').innerHTML=
-    '<button class="filter '+(active==='all'?'active':'')+
-    '" onclick="setCat(\\'all\\')">All Products</button>'+
-    cats.map(c=>
-      '<button class="filter '+
-      (active===c.id?'active':'')+
-      '" onclick="setCat(\\''+esc(c.id)+'\\')">'+
-      esc(c.name)+'</button>'
-    ).join('');
-}
-
-function setCat(id){
-  active=id;
-  drawFilters();
-  drawProducts();
-}
-
-function drawProducts(){
-  let list=active==='all'
-    ? all
-    : all.filter(p=>p.cat===active);
-
-  document.getElementById('productsGrid').innerHTML=
-    list.length
-    ? list.map(p=>
-      '<article class="product">'+
-      (p.imgs?.[0]
-        ? '<img loading="lazy" src="'+esc(p.imgs[0])+
-          '" alt="'+esc(p.title)+'">'
-        : '<div style="height:220px;background:#e9eef2"></div>'
-      )+
-      '<div class="pbody">'+
-      '<h3>'+esc(p.title)+'</h3>'+
-      '<div class="price">'+esc(p.price||'Contact for Price')+'</div>'+
-      '<p class="desc">'+esc(p.desc)+'</p>'+
-      (p.specs
-        ? '<div class="spec">'+esc(p.specs)+'</div>'
-        : ''
-      )+
-      (p.video
-        ? '<a class="video" href="'+esc(p.video)+
-          '" target="_blank" rel="noopener noreferrer">WATCH FACEBOOK VIDEO ↗</a>'
-        : ''
-      )+
-      '<p><a class="video" href="https://wa.me/8618124272578?text='+
-      encodeURIComponent('Hello, I am interested in '+p.title)+
-      '" target="_blank" rel="noopener">ASK FOR DETAILS →</a></p>'+
-      '</div></article>'
-    ).join('')
-    : '<p>No products listed in this category yet.</p>';
-}
-
-init();
-</script>
-</body>
-</html>`;
-}
-
-function adminPage(){
-return `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Depauw 管理后台</title>
-
-<style>
-*{box-sizing:border-box}
-body{
-  margin:0;
-  background:#f2f5f8;
-  color:#182433;
-  font-family:Arial,sans-serif
-}
-.shell{
-  max-width:1100px;
-  margin:35px auto;
-  padding:0 16px
-}
-.panel{
-  background:white;
-  border:1px solid #e3e8ed;
-  border-radius:8px;
-  padding:22px;
-  margin-bottom:18px;
-  box-shadow:0 3px 14px #14283b08
-}
-h1{font-size:23px;margin:0 0 8px}
-.muted{color:#687789;font-size:13px}
-label{
-  display:block;
-  font-weight:700;
-  font-size:13px;
-  margin:13px 0 6px
-}
-input,textarea,select{
-  width:100%;
-  padding:11px;
-  border:1px solid #cfd8e1;
-  border-radius:5px;
-  font:14px Arial
-}
-textarea{min-height:90px}
-button{
-  border:0;
-  border-radius:5px;
-  padding:11px 16px;
-  background:#1769aa;
-  color:white;
-  cursor:pointer;
-  font-weight:700;
-  margin:8px 6px 0 0
-}
-.secondary{background:#687789}
-.danger{background:#bd3b3b}
-.success{background:#18845c}
-.hidden{display:none!important}
-.cols{
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:14px
-}
-.item{
-  padding:15px 0;
-  border-top:1px solid #e8edf1
-}
-.itemhead{
-  display:flex;
-  justify-content:space-between;
-  gap:12px;
-  align-items:center
-}
-.thumbs{
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-  margin-top:10px
-}
-.thumbs img{
-  width:75px;
-  height:65px;
-  object-fit:cover;
-  border-radius:4px
-}
-.login{
-  max-width:420px;
-  margin:12vh auto
-}
-.notice{
-  padding:10px;
-  background:#edf5fb;
-  border-radius:5px;
-  color:#315a78;
-  font-size:13px
-}
-@media(max-width:650px){
-  .cols{grid-template-columns:1fr}
-  .itemhead{display:block}
-}
-</style>
-</head>
-
-<body>
-<main class="shell">
-
-<section id="login" class="panel login">
-  <h1>DEPAUW 管理后台</h1>
-  <p class="muted">请登录后管理网站产品和首页内容。</p>
-  <label>管理员密码</label>
-  <input id="password" type="password" autocomplete="current-password" placeholder="输入后台密码">
-  <button onclick="login()">登录后台</button>
-  <p id="loginMsg" class="muted"></p>
-</section>
-
-<div id="app" class="hidden">
-
-<section class="panel">
-  <div class="itemhead">
-    <div>
-      <h1>广州德堡机械 · 网站管理</h1>
-      <div class="muted">产品上架、图片上传、Facebook 视频链接和首页资料</div>
-    </div>
-    <button class="secondary" onclick="logout()">退出登录</button>
-  </div>
-  <p>
-    <a href="/" target="_blank">打开网站前台 ↗</a>
-    <a href="/sitemap.xml" target="_blank">Sitemap ↗</a>
-  </p>
-</section>
-
-<section class="panel">
-  <h2>首页资料</h2>
-
-  <label>公司英文介绍</label>
-  <textarea id="about"></textarea>
-
-  <label>首页横幅图片（电脑选择图片，可多选）</label>
-  <input id="banners" type="file" accept="image/jpeg,image/png,image/webp" multiple>
-  <div id="bannerPreview" class="thumbs"></div>
-
-  <label>首页工厂视频 Facebook 链接（可选）</label>
-  <input id="factoryVideo" placeholder="https://www.facebook.com/..."/>
-
-  <div class="cols">
-    <div>
-      <label>联系邮箱</label>
-      <input id="email" value="tangyinjun518@gmail.com">
-    </div>
-    <div>
-      <label>WhatsApp（国际格式数字）</label>
-      <input id="whatsapp" value="8618124272578">
-    </div>
-  </div>
-
-  <button class="success" onclick="saveConfig()">保存首页资料</button>
-</section>
-
-<section class="panel">
-  <h2 id="formTitle">添加新产品</h2>
-
-  <input id="editId" type="hidden">
-
-  <div class="cols">
-    <div>
-      <label>产品分类</label>
-      <select id="cat"></select>
-    </div>
-    <div>
-      <label>产品价格</label>
-      <input id="price" placeholder="例如：USD 1,950 / Contact for Price">
-    </div>
-  </div>
-
-  <label>英文产品名称</label>
-  <input id="title" placeholder="Fully Automatic Dough Divider and Rounder">
-
-  <label>产品卖点 / 简短介绍</label>
-  <textarea id="desc" placeholder="Write a short product introduction..."></textarea>
-
-  <label>技术参数（每行一项）</label>
-  <textarea id="specs" placeholder="Voltage: 220V / 380V
-Power: ..."></textarea>
-
-  <label>产品图片（从电脑选择，可多选，最多 8 张）</label>
-  <input id="images" type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple>
-  <div id="imagePreview" class="thumbs"></div>
-
-  <label>Facebook 视频链接（前台点击后跳转 Facebook）</label>
-  <input id="video" placeholder="https://www.facebook.com/reel/... 或视频链接">
-
-  <div>
-    <button class="success" onclick="saveProduct()">保存并上架</button>
-    <button class="secondary" onclick="resetForm()">清空 / 取消编辑</button>
-  </div>
-
-  <p id="formMsg" class="muted"></p>
-</section>
-
-<section class="panel">
-  <h2>已上架产品</h2>
-  <div id="list"></div>
-</section>
-
-</div>
-</main>
-
-<script>
-let products=[],categories=[],cfg={},currentImgs=[];
-
-const $=id=>document.getElementById(id);
-
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({
-  '&':'&amp;',
-  '<':'&lt;',
-  '>':'&gt;',
-  '"':'&quot;',
-  "'":'&#39;'
-}[c]));
-
-async function api(path,options={}){
-  const r=await fetch(path,{
-    ...options,
-    headers:{
-      ...(options.body instanceof FormData
-        ? {}
-        : {'Content-Type':'application/json'}
-      ),
-      ...(options.headers||{})
-    }
-  });
-
-  let d={};
-  try{
-    d=await r.json();
-  }catch{}
-
-  if(!r.ok)throw Error(d.error||'Request failed');
-  return d;
-}
-
-async function login(){
-  try{
-    await api('/api/login',{
-      method:'POST',
-      body:JSON.stringify({password:$('password').value})
-    });
-
-    $('login').classList.add('hidden');
-    $('app').classList.remove('hidden');
-
-    await load();
-  }catch(e){
-    $('loginMsg').textContent=e.message;
-  }
-}
-
-async function logout(){
-  await fetch('/api/logout',{method:'POST'});
-  location.reload();
-}
-
-async function load(){
-  const d=await api('/api/bootstrap');
-
-  products=d.products||[];
-  categories=d.categories||[];
-  cfg=d.siteConfig||{};
-
-  $('cat').innerHTML=categories.map(c=>
-    '<option value="'+esc(c.id)+'">'+
-    esc(c.name)+' / '+esc(c.zh)+'</option>'
-  ).join('');
-
-  $('about').value=cfg.about||'';
-  $('factoryVideo').value=cfg.factoryVideo||'';
-  $('email').value=cfg.email||'tangyinjun518@gmail.com';
-  $('whatsapp').value=cfg.whatsapp||'8618124272578';
-
-  renderList();
-}
-
-async function upload(input){
-  const files=[...input.files];
-
-  if(!files.length)return [];
-
-  if(files.length>8){
-    throw Error('最多一次选择 8 张图片');
-  }
-
-  const fd=new FormData();
-  files.forEach(f=>fd.append('images',f));
-
-  const d=await api('/api/admin/upload',{
-    method:'POST',
-    body:fd
-  });
-
-  return d.urls||[];
-}
-
-function previews(input,box){
-  box.innerHTML=[...input.files].map(f=>
-    '<img src="'+URL.createObjectURL(f)+'">'
-  ).join('');
-}
-
-$('images').addEventListener('change',()=>
-  previews($('images'),$('imagePreview'))
-);
-
-$('banners').addEventListener('change',()=>
-  previews($('banners'),$('bannerPreview'))
-);
-
-async function saveProduct(){
-  try{
-    const title=$('title').value.trim();
-
-    if(!title)throw Error('请填写产品名称');
-
-    let imgs=currentImgs.slice();
-
-    if($('images').files.length){
-      imgs=await upload($('images'));
-    }
-
-    const body={
-      action:$('editId').value?'update':'add',
-      id:$('editId').value,
-      cat:$('cat').value,
-      title,
-      price:$('price').value,
-      desc:$('desc').value,
-      specs:$('specs').value,
-      imgs,
-      video:$('video').value.trim()
-    };
-
-    const d=await api('/api/admin/products',{
-      method:'POST',
-      body:JSON.stringify(body)
-    });
-
-    products=d.products;
-    renderList();
-    resetForm();
-
-    $('formMsg').textContent='保存成功';
-  }catch(e){
-    $('formMsg').textContent=e.message;
-  }
-}
-
-function editProduct(id){
-  const p=products.find(x=>x.id===id);
-  if(!p)return;
-
-  $('editId').value=p.id;
-  $('formTitle').textContent='编辑产品';
-  $('cat').value=p.cat;
-  $('title').value=p.title;
-  $('price').value=p.price;
-  $('desc').value=p.desc;
-  $('specs').value=p.specs;
-  $('video').value=p.video||'';
-
-  currentImgs=p.imgs||[];
-
-  $('imagePreview').innerHTML=currentImgs.map(u=>
-    '<img src="'+esc(u)+'">'
-  ).join('');
-
-  $('formTitle').scrollIntoView({behavior:'smooth'});
-}
-
-function resetForm(){
-  ['editId','title','desc','specs','video'].forEach(id=>{
-    $(id).value='';
-  });
-
-  $('price').value='Contact for Price';
-  $('images').value='';
-  $('imagePreview').innerHTML='';
-  $('formTitle').textContent='添加新产品';
-  currentImgs=[];
-}
-
-async function delProduct(id){
-  if(!confirm('确定删除这款产品？'))return;
-
-  try{
-    const d=await api('/api/admin/products',{
-      method:'POST',
-      body:JSON.stringify({action:'delete',id})
-    });
-
-    products=d.products;
-    renderList();
-  }catch(e){
-    alert(e.message);
-  }
-}
-
-function renderList(){
-  $('list').innerHTML=products.length
-    ? products.map(p=>
-      '<div class="item">'+
-      '<div class="itemhead">'+
-      '<div><b>'+esc(p.title)+'</b>'+
-      '<div class="muted">'+esc(p.price)+
-      ' · '+
-      esc(categories.find(c=>c.id===p.cat)?.name||p.cat)+
-      '</div></div>'+
-      '<div>'+
-      '<button onclick="editProduct(\\''+esc(p.id)+'\\')">编辑</button>'+
-      '<button class="danger" onclick="delProduct(\\''+esc(p.id)+'\\')">删除</button>'+
-      '</div></div>'+
-      '<div class="thumbs">'+
-      (p.imgs||[]).map(u=>
-        '<img src="'+esc(u)+'">'
-      ).join('')+
-      '</div></div>'
-    ).join('')
-    : '<p class="muted">目前还没有产品，请在上方添加。</p>';
-}
-
-async function saveConfig(){
-  try{
-    let banners=cfg.banners||[];
-
-    if($('banners').files.length){
-      banners=await upload($('banners'));
-    }
-
-    const body={
-      about:$('about').value,
-      banners,
-      factoryVideo:$('factoryVideo').value,
-      email:$('email').value,
-      whatsapp:$('whatsapp').value
-    };
-
-    const d=await api('/api/admin/config',{
-      method:'POST',
-      body:JSON.stringify(body)
-    });
-
-    cfg=d.siteConfig;
-    alert('首页资料已保存');
-  }catch(e){
-    alert(e.message);
-  }
-}
-
-api('/api/admin/status').then(d=>{
-  if(d.authenticated){
-    $('login').classList.add('hidden');
-    $('app').classList.remove('hidden');
-    load();
-  }
-}).catch(()=>{});
-</script>
-</body>
-</html>`;
-}
