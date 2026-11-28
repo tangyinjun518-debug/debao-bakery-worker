@@ -165,6 +165,9 @@ function render(){
     "</div>"
   ).join("");
 }
+</script></body></html>`);
+}
+
 async function apiHandler(req,env,url) {
   const path=url.pathname,method=req.method;
   if(path==="/api/login"&&method==="POST"){
