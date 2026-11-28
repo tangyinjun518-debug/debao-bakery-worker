@@ -1,17 +1,8 @@
 export default {
   async fetch(request, env) {
-    const ADMIN_PASSWORD = env.ADMIN_PASSWORD || "gzdbjx..168";
     const NL = String.fromCharCode(10);
     const url = new URL(request.url);
     const path = url.pathname;
-
-    function isAuthorized(req) {
-      const authHeader = req.headers.get("X-Admin-Password") || "";
-      const cookieHeader = req.headers.get("Cookie") || "";
-      const cookieMatch = cookieHeader.match(/(?:^|;\s*)debao_admin_pwd=([^;]+)/);
-      const cookiePwd = cookieMatch ? decodeURIComponent(cookieMatch[1]) : "";
-      return authHeader === ADMIN_PASSWORD || cookiePwd === ADMIN_PASSWORD;
-    }
 
     if (path === "/robots.txt") {
       const robots = [
@@ -42,19 +33,6 @@ export default {
       return new Response(xml, {
         headers: { "Content-Type": "application/xml; charset=utf-8" }
       });
-    }
-
-    if (path === "/api/admin-login" && request.method === "POST") {
-      const body = await request.json().catch(() => ({}));
-      if (body.password === ADMIN_PASSWORD) {
-        return new Response(JSON.stringify({ ok: true }), {
-          headers: {
-            "Content-Type": "application/json",
-            "Set-Cookie": "debao_admin_pwd=" + encodeURIComponent(ADMIN_PASSWORD) + "; Path=/; Max-Age=604800; SameSite=Lax"
-          }
-        });
-      }
-      return Response.json({ ok: false, error: "管理密码错误" }, { status: 401 });
     }
 
     const defaultCategories = [
@@ -205,9 +183,6 @@ export default {
     }
 
     if (path === "/api/products" && request.method === "POST") {
-      if (!isAuthorized(request)) {
-        return Response.json({ error: "未授权或登录已过期，请刷新输入管理密码" }, { status: 401 });
-      }
       if (!db) return Response.json({ error: "KV DB not bound" }, { status: 500 });
       const body = await request.json();
       const products = await getData("products", defaultProducts);
@@ -250,9 +225,6 @@ export default {
     }
 
     if (path === "/api/site-config" && request.method === "POST") {
-      if (!isAuthorized(request)) {
-        return Response.json({ error: "未授权或登录已过期，请刷新输入管理密码" }, { status: 401 });
-      }
       if (!db) return Response.json({ error: "KV DB not bound" }, { status: 500 });
       const body = await request.json();
       const nextCfg = {
@@ -266,11 +238,6 @@ export default {
     }
 
     if (path === "/admin") {
-      if (!isAuthorized(request)) {
-        return new Response(renderLoginHtml(), {
-          headers: { "Content-Type": "text/html; charset=utf-8" }
-        });
-      }
       return new Response(renderAdminHtml(defaultCategories, defaultSpecTemplate, defaultSiteConfig), {
         headers: { "Content-Type": "text/html; charset=utf-8" }
       });
@@ -281,55 +248,6 @@ export default {
     });
   }
 };
-
-function renderLoginHtml() {
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>德堡机械 - 管理后台登录</title>
-  <style>
-    body { font-family: Arial, sans-serif; background: #111827; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-    .card { background: #fff; padding: 32px 28px; border-radius: 12px; width: 100%; max-width: 360px; box-shadow: 0 10px 25px rgba(0,0,0,0.25); }
-    h2 { margin: 0 0 8px; font-size: 20px; color: #111827; }
-    p { margin: 0 0 18px; font-size: 13px; color: #6b7280; }
-    input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 15px; margin-bottom: 12px; }
-    button { width: 100%; padding: 10px; border: none; border-radius: 8px; background: #ea580c; color: #fff; font-weight: bold; font-size: 15px; cursor: pointer; }
-    button:hover { background: #c2410c; }
-    .err { color: #dc2626; font-size: 13px; margin-top: 10px; min-height: 18px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h2>🔒 德堡机械管理后台</h2>
-    <p>请输入管理员密码后进入后台操作</p>
-    <form onsubmit="doLogin(event)">
-      <input type="password" id="pwd" placeholder="请输入管理密码" required autofocus />
-      <button type="submit">登录后台</button>
-    </form>
-    <div class="err" id="errMsg"></div>
-  </div>
-  <script>
-    async function doLogin(e) {
-      e.preventDefault();
-      const pwd = document.getElementById("pwd").value;
-      const res = await fetch("/api/admin-login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: pwd })
-      });
-      const data = await res.json();
-      if (data.ok) {
-        location.reload();
-      } else {
-        document.getElementById("errMsg").textContent = data.error || "密码错误";
-      }
-    }
-  </script>
-</body>
-</html>`;
-}
 
 function renderStoreHtml(categories, defaultSiteConfig) {
   return `<!DOCTYPE html>
@@ -342,7 +260,6 @@ function renderStoreHtml(categories, defaultSiteConfig) {
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="bg-gray-50 text-gray-800 font-sans">
-  <!-- Top Bar -->
   <div class="bg-gray-900 text-gray-300 text-sm py-2 px-4">
     <div class="max-w-7xl mx-auto flex justify-between items-center flex-wrap gap-2">
       <div class="flex items-center space-x-4 flex-wrap">
@@ -366,7 +283,6 @@ function renderStoreHtml(categories, defaultSiteConfig) {
     </div>
   </div>
 
-  <!-- Navbar -->
   <nav class="bg-white shadow-md sticky top-0 z-40">
     <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
       <a href="#" class="text-2xl font-black tracking-wider text-gray-900">DEBAO <span class="text-orange-600">MACHINERY</span></a>
@@ -384,7 +300,6 @@ function renderStoreHtml(categories, defaultSiteConfig) {
     </div>
   </nav>
 
-  <!-- Hero Banner -->
   <header class="relative bg-gray-900 text-white overflow-hidden">
     <div id="heroBg" class="absolute inset-0 bg-cover bg-center opacity-35 transition-all duration-700"></div>
     <div class="relative z-10 max-w-5xl mx-auto py-20 px-4 text-center">
@@ -401,7 +316,6 @@ function renderStoreHtml(categories, defaultSiteConfig) {
     </div>
   </header>
 
-  <!-- About Us & Factory Video -->
   <section id="about" class="max-w-7xl mx-auto px-4 py-14">
     <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
       <div>
@@ -433,7 +347,6 @@ function renderStoreHtml(categories, defaultSiteConfig) {
     </div>
   </section>
 
-  <!-- Product Catalog -->
   <section id="catalog" class="max-w-7xl mx-auto px-4 py-8">
     <div class="text-center mb-8">
       <span class="text-xs font-bold text-orange-600 uppercase tracking-wider" data-i18n="ourProducts">OUR PRODUCTS</span>
@@ -450,7 +363,6 @@ function renderStoreHtml(categories, defaultSiteConfig) {
     <div id="prodGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8"></div>
   </section>
 
-  <!-- Certifications -->
   <section id="certs" class="max-w-7xl mx-auto px-4 py-14">
     <div class="text-center mb-8">
       <span class="text-xs font-bold text-orange-600 uppercase tracking-wider">QUALITY & QUALIFICATIONS</span>
@@ -459,7 +371,6 @@ function renderStoreHtml(categories, defaultSiteConfig) {
     <div id="certsGrid" class="grid grid-cols-2 md:grid-cols-4 gap-6"></div>
   </section>
 
-  <!-- Shipping & OEM -->
   <section id="shipping" class="bg-white border-t border-gray-200 py-14 px-4">
     <div class="max-w-7xl mx-auto">
       <div class="text-center mb-10">
@@ -483,7 +394,6 @@ function renderStoreHtml(categories, defaultSiteConfig) {
     </div>
   </section>
 
-  <!-- Footer -->
   <footer class="bg-gray-900 text-gray-400 py-10 px-4 text-center">
     <div class="max-w-7xl mx-auto">
       <div class="text-white font-bold text-lg">Guangzhou Debao Machinery Co., Ltd.</div>
@@ -492,7 +402,6 @@ function renderStoreHtml(categories, defaultSiteConfig) {
     </div>
   </footer>
 
-  <!-- Product Detail & Specs Modal -->
   <div id="detailModal" class="fixed inset-0 bg-black/60 z-50 hidden items-center justify-center p-4" onclick="if(event.target===this)closeModal()">
     <div class="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6 relative shadow-2xl">
       <button onclick="closeModal()" class="absolute top-4 right-4 w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 font-bold text-gray-700">×</button>
@@ -807,15 +716,12 @@ function renderAdminHtml(categories, defaultSpecTemplate, defaultSiteConfig) {
 </head>
 <body>
   <div class="wrap">
-    <div class="panel" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
-      <div>
-        <h2 style="margin:0 0 8px;">🏭 广州德堡机械 - 独立站全功能管理后台</h2>
-        <div style="font-size:13px;color:#4b5563;">已开启管理员密码保护 · 支持产品技术参数模板、本地传图传视频与 Sitemap 收录</div>
-        <div style="margin-top:8px;">
-          <a href="/" target="_blank">查看前台网站 ↗</a> · <a href="/sitemap.xml" target="_blank">查看 Sitemap ↗</a>
-        </div>
+    <div class="panel">
+      <h2 style="margin:0 0 8px;">🏭 广州德堡机械 - 独立站全功能管理后台</h2>
+      <div style="font-size:13px;color:#4b5563;">直接编辑与上架 · 支持产品技术参数模板、本地传图传视频与 Sitemap 收录</div>
+      <div style="margin-top:8px;">
+        <a href="/" target="_blank">查看前台网站 ↗</a> · <a href="/sitemap.xml" target="_blank">查看 Sitemap ↗</a>
       </div>
-      <button type="button" class="danger" onclick="logoutAdmin()">退出登录</button>
     </div>
 
     <div class="panel">
@@ -880,11 +786,6 @@ function renderAdminHtml(categories, defaultSpecTemplate, defaultSiteConfig) {
     let siteConfig = fallbackCfg;
     let editingId = null;
     let editImgsBuffer = [];
-
-    function logoutAdmin() {
-      document.cookie = "debao_admin_pwd=; Path=/; Max-Age=0";
-      location.reload();
-    }
 
     function esc(s) {
       return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
